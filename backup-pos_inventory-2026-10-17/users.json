@@ -1,0 +1,27 @@
+[
+ {
+  "_id": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "username": "admin",
+  "passwordHash": "$2a$10$5B.PmBk40ItxoQbz6qL2WeSYFvB/0HmmOZahIgDoV20F8LhOuXmPy",
+  "name": "Administrator",
+  "role": "admin",
+  "active": true,
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789103728088"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465340"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": null,
+  "isSuperAdmin": true
+ }
+]

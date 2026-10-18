@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Playfair Display', Georgia, serif;
+
+  /* Bulbul Cosmetics brand: berry rose. Used as bg-brand-600, text-brand-700, ... */
+  --color-brand-50: #fdf2f7;
+  --color-brand-100: #fce7f1;
+  --color-brand-200: #fbcfe4;
+  --color-brand-300: #f7a6c9;
+  --color-brand-400: #ef72a6;
+  --color-brand-500: #e04889;
+  --color-brand-600: #c9296d;
+  --color-brand-700: #a81d58;
+  --color-brand-800: #8b1b4b;
+  --color-brand-900: #5a1446;
+  --color-brand-950: #3b0a2c;
+
+  /* Champagne gold accent. */
+  --color-gold-100: #fbf1db;
+  --color-gold-200: #f6e2b3;
+  --color-gold-300: #ecc983;
+  --color-gold-400: #d9ab5b;
+  --color-gold-500: #c39243;
+  --color-gold-600: #a07432;
+
+  /* The old red accent follows the brand. */
+  --color-red-50: #fdf2f7;
+  --color-red-100: #fce7f1;
+  --color-red-200: #fbcfe4;
+  --color-red-300: #f7a6c9;
+  --color-red-400: #ef72a6;
+  --color-red-500: #e04889;
+  --color-red-600: #c9296d;
+  --color-red-700: #a81d58;
+  --color-red-800: #8b1b4b;
+  --color-red-900: #5a1446;
+  --color-red-950: #3b0a2c;
+
+  /* Warm mauve greys instead of cold blue-grey. */
+  --color-slate-50: #faf7f8;
+  --color-slate-100: #f4eef1;
+  --color-slate-200: #eae0e5;
+  --color-slate-300: #d8c8d0;
+  --color-slate-400: #ad98a4;
+  --color-slate-500: #85707d;
+  --color-slate-600: #67545f;
+  --color-slate-700: #4f3f49;
+  --color-slate-800: #382a33;
+  --color-slate-900: #271b24;
+  --color-slate-950: #170f15;
+
+  /* Neutral leans plum, so the dark bands on documents read as deep plum. */
+  --color-neutral-50: #fbf7f9;
+  --color-neutral-100: #f4ecf0;
+  --color-neutral-200: #e8d9e0;
+  --color-neutral-300: #d1bbc7;
+  --color-neutral-400: #a88c9b;
+  --color-neutral-500: #7f6474;
+  --color-neutral-600: #614859;
+  --color-neutral-700: #4b3345;
+  --color-neutral-800: #3b2236;
+  --color-neutral-900: #2e1329;
+  --color-neutral-950: #24091f;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+  font-family: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+  background-image:
+    radial-gradient(60rem 30rem at 100% -10%, rgb(252 231 241 / 0.7), transparent 60%),
+    radial-gradient(40rem 24rem at -10% 110%, rgb(251 241 219 / 0.5), transparent 60%);
+  background-attachment: fixed;
+}
+
+h1, h2, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The deep plum used by the sidebar, hero banners and the login panel. */
+.bg-bulbul {
+  background-color: #3b0a2c;
+  background-image:
+    radial-gradient(28rem 20rem at 110% 0%, rgb(224 72 137 / 0.35), transparent 60%),
+    radial-gradient(22rem 18rem at -20% 100%, rgb(217 171 91 / 0.22), transparent 60%),
+    linear-gradient(160deg, #4a0f39 0%, #2c0722 100%);
+}
+
+.text-gold-shine {
+  background: linear-gradient(100deg, #f6e2b3 0%, #d9ab5b 45%, #f6e2b3 70%, #c39243 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Plain manual-entry numeric inputs (Seller/POS quantity, etc.) -- no
+   increment/decrement stepper control of any kind. */
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spinner {
+  -moz-appearance: textfield;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #e0c9d5;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c9296d;
+}
+
+/* Print styles: receipts and reports render on a plain white page with the
+   app chrome (sidebar, topbar, buttons, filters) hidden entirely. Business
+   reports (A4) additionally get clean page-break control so a KPI group,
+   chart, or table row never splits awkwardly across pages, and table
+   headers repeat on every printed page. */
+@media print {
+  body {
+    background: #fff;
+  }
+  body * {
+    visibility: hidden;
+  }
+  #print-area, #print-area * {
+    visibility: visible;
+  }
+  #print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+
+  .report-section,
+  .kpi-grid,
+  .chart-container {
+    break-inside: avoid;
+  }
+
+  table thead {
+    display: table-header-group;
+  }
+  table tfoot {
+    display: table-footer-group;
+  }
+  table tr {
+    break-inside: avoid;
+  }
+}

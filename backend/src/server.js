@@ -1,0 +1,52 @@
+import 'dotenv/config';
+import mongoose from 'mongoose';
+import app from './app.js';
+import { connectDB } from './config/db.js';
+import { migrateInventorySchema } from './utils/migrateInventoryV2.js';
+import { migrateSalesSchema } from './utils/migrateSalesV2.js';
+import { seedDefaultAccounts } from './utils/seedAccounts.js';
+import { migrateBranches } from './utils/migrateBranches.js';
+import Branch from './models/Branch.js';
+import { runWithBranch } from './services/branchContext.js';
+import InventoryItem from './models/InventoryItem.js';
+
+const PORT = process.env.PORT || 5010;
+
+// JWT_SECRET has no safe default -- authController signs/verifies every
+// token with it, so a missing secret must fail loudly at startup rather
+// than surface as a confusing runtime error on the first login attempt.
+function validateEnv() {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is required. Set it in the environment before starting the server.');
+  }
+  if (!process.env.MONGO_URI) {
+    console.warn('[server] MONGO_URI is not set -- falling back to mongodb://127.0.0.1:27017/pos_inventory');
+  }
+}
+
+async function start() {
+  try {
+    validateEnv();
+    await connectDB();
+    await migrateInventorySchema();
+    await migrateSalesSchema();
+    await migrateBranches();
+    // Each branch gets the default payment accounts.
+    for (const b of await Branch.find()) await runWithBranch(b._id, () => seedDefaultAccounts());
+    await InventoryItem.syncIndexes();
+    // Build every model's indexes now, before serving. Otherwise the first
+    // use of a model builds them mid-request, and a payment transaction
+    // running at that moment is aborted and retried from the start.
+    await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
+    // Bind to 0.0.0.0 (not just localhost) so a reverse proxy (Nginx, etc.)
+    // running outside this process/container can reach the API.
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[server] Inventory API listening on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error('[server] failed to start:', err.message);
+    process.exit(1);
+  }
+}
+
+start();

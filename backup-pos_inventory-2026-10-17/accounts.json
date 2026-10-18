@@ -1,0 +1,157 @@
+[
+ {
+  "_id": {
+   "$oid": "6ad24659b6ed0fb15987c098"
+  },
+  "name": "EVC Plus",
+  "type": "MOBILE_MONEY",
+  "accountNumber": "",
+  "openingBalanceCents": {
+   "$numberInt": "0"
+  },
+  "currentBalanceCents": {
+   "$numberInt": "0"
+  },
+  "isActive": true,
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1792165465850"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465850"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6ad24659b6ed0fb15987c09b"
+  },
+  "name": "eDahab",
+  "type": "MOBILE_MONEY",
+  "accountNumber": "",
+  "openingBalanceCents": {
+   "$numberInt": "0"
+  },
+  "currentBalanceCents": {
+   "$numberInt": "0"
+  },
+  "isActive": true,
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1792165465856"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465856"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6ad24659b6ed0fb15987c09e"
+  },
+  "name": "Dahabshiil",
+  "type": "MOBILE_MONEY",
+  "accountNumber": "",
+  "openingBalanceCents": {
+   "$numberInt": "0"
+  },
+  "currentBalanceCents": {
+   "$numberInt": "0"
+  },
+  "isActive": true,
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1792165465861"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465861"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6ad24659b6ed0fb15987c0a1"
+  },
+  "name": "Merchant",
+  "type": "MERCHANT",
+  "accountNumber": "",
+  "openingBalanceCents": {
+   "$numberInt": "0"
+  },
+  "currentBalanceCents": {
+   "$numberInt": "0"
+  },
+  "isActive": true,
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1792165465865"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465865"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6ad24659b6ed0fb15987c0a4"
+  },
+  "name": "Salaam Bank",
+  "type": "BANK",
+  "accountNumber": "",
+  "openingBalanceCents": {
+   "$numberInt": "0"
+  },
+  "currentBalanceCents": {
+   "$numberInt": "0"
+  },
+  "isActive": true,
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1792165465870"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1792165465870"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  }
+ }
+]

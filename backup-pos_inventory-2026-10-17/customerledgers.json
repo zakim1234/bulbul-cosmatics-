@@ -1,0 +1,548 @@
+[
+ {
+  "_id": {
+   "$oid": "6aa396935ae4cdf7aee40f1b"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "400"
+  },
+  "sale": {
+   "$oid": "6aa396935ae4cdf7aee40f16"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000002",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "400"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105811896"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105811896"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa3969d5ae4cdf7aee40f2c"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_VOID",
+  "amountCents": {
+   "$numberInt": "-400"
+  },
+  "sale": {
+   "$oid": "6aa396935ae4cdf7aee40f16"
+  },
+  "payment": null,
+  "description": "Voided sale INV-2026-000002",
+  "balanceBeforeCents": {
+   "$numberInt": "400"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105821730"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105821730"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa396da5ae4cdf7aee40f69"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "300"
+  },
+  "sale": {
+   "$oid": "6aa396da5ae4cdf7aee40f64"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000003",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "300"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105882443"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105882443"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa397125ae4cdf7aee40f7a"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_VOID",
+  "amountCents": {
+   "$numberInt": "-300"
+  },
+  "sale": {
+   "$oid": "6aa396da5ae4cdf7aee40f64"
+  },
+  "payment": null,
+  "description": "Voided sale INV-2026-000003",
+  "balanceBeforeCents": {
+   "$numberInt": "300"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105938672"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105938672"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa397805ae4cdf7aee40ff9"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "200"
+  },
+  "sale": {
+   "$oid": "6aa397805ae4cdf7aee40ff6"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000004",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "200"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106048712"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106048712"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa3978a5ae4cdf7aee4100a"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_VOID",
+  "amountCents": {
+   "$numberInt": "-200"
+  },
+  "sale": {
+   "$oid": "6aa397805ae4cdf7aee40ff6"
+  },
+  "payment": null,
+  "description": "Voided sale INV-2026-000004",
+  "balanceBeforeCents": {
+   "$numberInt": "200"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106058394"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106058394"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa398705ae4cdf7aee41127"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "400"
+  },
+  "sale": {
+   "$oid": "6aa398705ae4cdf7aee41122"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000005",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "400"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106288640"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106288640"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa399105ae4cdf7aee411fd"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "PAYMENT",
+  "amountCents": {
+   "$numberInt": "-400"
+  },
+  "sale": null,
+  "payment": {
+   "$oid": "6aa399105ae4cdf7aee411fb"
+  },
+  "description": "Debt payment PAY-2026-000001 (INV-2026-000005)",
+  "balanceBeforeCents": {
+   "$numberInt": "400"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106448406"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106448406"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa39a0b5ae4cdf7aee412db"
+  },
+  "customer": {
+   "$oid": "6aa399f95ae4cdf7aee412c7"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "100"
+  },
+  "sale": {
+   "$oid": "6aa39a0b5ae4cdf7aee412d6"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000006",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "100"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106699123"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106699123"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa39a485ae4cdf7aee4133f"
+  },
+  "customer": {
+   "$oid": "6aa399f95ae4cdf7aee412c7"
+  },
+  "type": "PAYMENT",
+  "amountCents": {
+   "$numberInt": "-100"
+  },
+  "sale": null,
+  "payment": {
+   "$oid": "6aa39a485ae4cdf7aee4133d"
+  },
+  "description": "Debt payment PAY-2026-000002 (INV-2026-000006)",
+  "balanceBeforeCents": {
+   "$numberInt": "100"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106760303"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106760303"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa40c835ae4cdf7aee414e5"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "1460"
+  },
+  "sale": {
+   "$oid": "6aa40c835ae4cdf7aee414e0"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000007",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "1460"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789136003152"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789136003152"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa40ce55ae4cdf7aee4152b"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "PAYMENT",
+  "amountCents": {
+   "$numberInt": "-1460"
+  },
+  "sale": null,
+  "payment": {
+   "$oid": "6aa40ce55ae4cdf7aee41529"
+  },
+  "description": "Debt payment PAY-2026-000003 (INV-2026-000007)",
+  "balanceBeforeCents": {
+   "$numberInt": "1460"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "0"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789136101464"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789136101464"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa456625ae4cdf7aee415e7"
+  },
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "type": "SALE_CREDIT",
+  "amountCents": {
+   "$numberInt": "120"
+  },
+  "sale": {
+   "$oid": "6aa456625ae4cdf7aee415e2"
+  },
+  "payment": null,
+  "description": "Credit sale INV-2026-000008",
+  "balanceBeforeCents": {
+   "$numberInt": "0"
+  },
+  "balanceAfterCents": {
+   "$numberInt": "120"
+  },
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789154914228"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789154914228"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ }
+]

@@ -1,0 +1,471 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Trash2, Plus, Search, Save, FileText, Building2, Pencil, ArrowRightLeft, CheckCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import client from '../../api/client.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { useToast } from '../../context/ToastContext.jsx';
+import { useDebounce } from '../../hooks/useDebounce.js';
+import { formatCurrency, formatDate, formatDateTime } from '../../utils/format.js';
+import Button from '../../components/ui/Button.jsx';
+import Modal from '../../components/ui/Modal.jsx';
+import ConfirmDialog from '../../components/ui/ConfirmDialog.jsx';
+import { FormField, Input, Textarea } from '../../components/ui/Field.jsx';
+import { PageSpinner } from '../../components/ui/Spinner.jsx';
+import SupplierPicker from '../purchases/SupplierPicker.jsx';
+
+const emptyRow = () => ({ itemName: '', quantity: '', cost: '' });
+
+// A manually-entered archive of a supplier's paper invoice, saved exactly as
+// typed. This NEVER touches Stock or Inventory -- see
+// supplierInvoiceArchiveController on the backend. Default view is a
+// searchable file browser of every archived invoice; the entry form only
+// appears inside the "+ Manual Entry Invoice" modal (also used to edit).
+// Edit and Delete are admin/manager only (the server enforces it too).
+export default function ManualSupplierInvoiceArchive() {
+  const toast = useToast();
+  const { user } = useAuth();
+  const canManage = user?.role === 'admin' || user?.role === 'manager';
+  const [query, setQuery] = useState('');
+  const debouncedQuery = useDebounce(query, 250);
+  const [archives, setArchives] = useState(null); // null = loading
+  const [loading, setLoading] = useState(true);
+  const [viewing, setViewing] = useState(null);
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    client
+      .get('/supplier-invoice-archives', { params: { q: debouncedQuery, limit: 50 } })
+      .then((res) => setArchives(res.data.data))
+      .catch((err) => toast.error(err.friendlyMessage || 'Failed to load supplier invoice archives.'))
+      .finally(() => setLoading(false));
+  }, [debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => load(), [load]);
+
+  const startEdit = (archive) => {
+    setViewing(null);
+    setEditing(archive);
+  };
+  const startDelete = (archive) => {
+    setViewing(null);
+    setDeleteTarget(archive);
+  };
+
+  const [sending, setSending] = useState(null);
+  const sendToPurchases = async (archive) => {
+    setSending(archive.id);
+    try {
+      const res = await client.post(`/supplier-invoice-archives/${archive.id}/to-purchase`, {});
+      toast.success(`Added to Purchase Invoices as ${res.data.data.purchaseNumber} — ${formatCurrency(archive.grandTotal)} owed to ${archive.supplierName}.`);
+      load();
+    } catch (err) {
+      toast.error(err.friendlyMessage || 'Could not add it to Purchase Invoices.');
+    } finally {
+      setSending(null);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await client.delete(`/supplier-invoice-archives/${deleteTarget.id}`);
+      toast.success(
+        res.data.data.refunded > 0
+          ? `Serial ${deleteTarget.serialNumber} deleted — ${formatCurrency(res.data.data.refunded)} paid on it went back to the account.`
+          : `Serial ${deleteTarget.serialNumber} deleted.`
+      );
+      setDeleteTarget(null);
+      load();
+    } catch (err) {
+      toast.error(err.friendlyMessage || 'Could not delete this invoice.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative max-w-md flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            className="pl-9"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by Shop/Supplier Serial Number, Supplier name..."
+          />
+        </div>
+        <Button onClick={() => setEntryOpen(true)}>
+          <Plus className="h-4 w-4" /> Manual Entry Invoice
+        </Button>
+      </div>
+
+      {loading && archives === null ? (
+        <PageSpinner />
+      ) : archives.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-white py-14 text-center text-sm text-slate-400">
+          {query ? 'Wax natiijo ah lama helin.' : 'No supplier invoice archives yet. Click "+ Manual Entry Invoice" to add one.'}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {archives.map((a) => (
+            <div
+              key={a.id}
+              className="group flex flex-col rounded-xl border border-slate-200 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md"
+            >
+              <button
+                onClick={() => setViewing(a)}
+                className="flex flex-1 flex-col items-start gap-1.5 rounded-t-xl p-4 text-left focus:outline-none focus:ring-2 focus:ring-brand-400"
+              >
+                <div className="flex w-full items-center gap-2">
+                  <FileText className="h-8 w-8 shrink-0 text-brand-400 group-hover:text-brand-600" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900">Serial: {a.serialNumber}</p>
+                    <p className="truncate text-xs text-slate-400">{a.archiveNumber}</p>
+                  </div>
+                </div>
+                <div className="mt-1 flex w-full items-center gap-1.5 text-xs text-slate-500">
+                  <Building2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{a.supplierName || '(no supplier)'}</span>
+                </div>
+                <p className="text-xs text-slate-400">{formatDate(a.createdAt)}</p>
+                <p className="mt-1 text-base font-bold tabular-nums text-slate-900">{formatCurrency(a.grandTotal)}</p>
+              </button>
+              <div className="px-4 pb-2.5">
+                {a.purchaseNumber ? (
+                  <Link
+                    to={`/purchases/${a.purchase}`}
+                    className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-200"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 text-brand-600" /> In Purchase Invoices · {a.purchaseNumber}
+                  </Link>
+                ) : a.supplier ? (
+                  <button
+                    type="button"
+                    disabled={sending === a.id}
+                    onClick={() => sendToPurchases(a)}
+                    className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5" /> {sending === a.id ? 'Adding…' : 'Add to Purchase Invoices'}
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-slate-400">No supplier — Edit to choose one, then add to Purchase Invoices</span>
+                )}
+              </div>
+              {canManage && (
+                <div className="flex gap-1.5 border-t border-slate-100 px-4 py-2.5">
+                  <CardAction icon={Pencil} label="Edit" onClick={() => startEdit(a)} />
+                  <CardAction icon={Trash2} label="Delete" danger onClick={() => startDelete(a)} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ArchiveDetailModal archive={viewing} onClose={() => setViewing(null)} canManage={canManage} onEdit={startEdit} onDelete={startDelete} />
+      <ManualEntryModal
+        open={entryOpen || !!editing}
+        archive={editing}
+        onClose={() => {
+          setEntryOpen(false);
+          setEditing(null);
+        }}
+        onSaved={() => {
+          setEntryOpen(false);
+          setEditing(null);
+          load();
+        }}
+      />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Supplier Invoice"
+        message={`Ma hubtaa inaad tirtirto invoice-ka Serial ${deleteTarget?.serialNumber} (${formatCurrency(deleteTarget?.grandTotal)})? Falkan dib looma celin karo. ${deleteTarget?.purchase ? ' Its purchase invoice is deleted too; anything paid on it goes back to the account.' : ''} (Stock is not affected.)`}
+        confirmLabel="Confirm Delete"
+        variant="danger"
+        loading={deleting}
+        onConfirm={handleDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+}
+
+function CardAction({ icon: Icon, label, onClick, danger = false }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+        danger ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-slate-200 text-slate-600 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700'
+      }`}
+    >
+      <Icon className="h-3.5 w-3.5" /> {label}
+    </button>
+  );
+}
+
+function ArchiveDetailModal({ archive, onClose, canManage, onEdit, onDelete }) {
+  if (!archive) return null;
+  return (
+    <Modal
+      open={!!archive}
+      onClose={onClose}
+      title={`Serial: ${archive.serialNumber}`}
+      size="lg"
+      footer={
+        canManage && (
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => onEdit(archive)}>
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+            <Button variant="danger" onClick={() => onDelete(archive)}>
+              <Trash2 className="h-4 w-4" /> Delete
+            </Button>
+          </div>
+        )
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <Field label="Archive No." value={archive.archiveNumber} />
+          <Field label="Supplier" value={archive.supplierName || '(none)'} />
+          <Field label="Date" value={formatDateTime(archive.createdAt)} />
+          <Field label="Grand Total" value={formatCurrency(archive.grandTotal)} />
+        </div>
+        <div className="overflow-hidden rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase text-slate-500">Item Name</th>
+                <th className="px-2 py-2 text-center text-xs font-medium uppercase text-slate-500">Qty</th>
+                <th className="px-2 py-2 text-right text-xs font-medium uppercase text-slate-500">Cost</th>
+                <th className="px-3 py-2 text-right text-xs font-medium uppercase text-slate-500">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {archive.rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="px-3 py-1.5 text-slate-700">{r.itemName}</td>
+                  <td className="px-2 py-1.5 text-center tabular-nums text-slate-600">{r.quantity}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">{formatCurrency(r.cost)}</td>
+                  <td className="px-3 py-1.5 text-right font-medium tabular-nums text-slate-900">{formatCurrency(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {archive.notes && (
+          <div>
+            <p className="text-xs font-medium uppercase text-slate-400">Notes</p>
+            <p className="text-sm text-slate-600">{archive.notes}</p>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Field({ label, value }) {
+  return (
+    <div>
+      <p className="text-xs uppercase text-slate-400">{label}</p>
+      <p className="font-semibold text-slate-800">{value}</p>
+    </div>
+  );
+}
+
+// New archive, or (with `archive`) edit an existing one.
+function ManualEntryModal({ open, archive, onClose, onSaved }) {
+  const toast = useToast();
+  const editing = !!archive;
+  const [supplier, setSupplier] = useState(null);
+  const [serialNumber, setSerialNumber] = useState('');
+  const [notes, setNotes] = useState('');
+  const [rows, setRows] = useState([emptyRow()]);
+  const [saving, setSaving] = useState(false);
+  const nameRefs = useRef({});
+
+  useEffect(() => {
+    if (!open) return;
+    if (archive) {
+      setSupplier(archive.supplier ? { id: archive.supplier, name: archive.supplierName } : null);
+      setSerialNumber(archive.serialNumber);
+      setNotes(archive.notes || '');
+      setRows(archive.rows.map((r) => ({ itemName: r.itemName, quantity: String(r.quantity), cost: String(r.cost) })));
+    } else {
+      setSupplier(null);
+      setSerialNumber('');
+      setNotes('');
+      setRows([emptyRow()]);
+    }
+  }, [open, archive]);
+
+  const grandTotal = useMemo(() => rows.reduce((sum, r) => sum + (Number(r.quantity) || 0) * (Number(r.cost) || 0), 0), [rows]);
+
+  const setRow = (index, key, value) => setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
+
+  const addRow = (focus = true) => {
+    setRows((prev) => [...prev, emptyRow()]);
+    if (focus) setTimeout(() => nameRefs.current[rows.length]?.focus(), 0);
+  };
+
+  const removeRow = (index) => setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+
+  const handleLastCellKeyDown = (index, e) => {
+    const isLastRow = index === rows.length - 1;
+    if (isLastRow && e.key === 'Tab' && !e.shiftKey && rows[index].itemName.trim()) {
+      e.preventDefault();
+      addRow();
+    }
+  };
+
+  const handleSave = async () => {
+    if (!serialNumber.trim()) return toast.error('Enter the Shop/Supplier Serial Number.');
+    const validRows = rows.filter((r) => r.itemName.trim());
+    if (!validRows.length) return toast.error('Add at least one row.');
+    for (const r of validRows) {
+      if (!Number(r.quantity) || Number(r.quantity) <= 0) return toast.error(`Enter a valid quantity for "${r.itemName}".`);
+      if (r.cost === '' || Number(r.cost) < 0) return toast.error(`Enter a valid cost for "${r.itemName}".`);
+    }
+    const body = {
+      serialNumber: serialNumber.trim(),
+      supplierId: supplier?.id || null,
+      rows: validRows.map((r) => ({ itemName: r.itemName.trim(), quantity: Number(r.quantity), cost: Number(r.cost) })),
+      notes,
+    };
+    setSaving(true);
+    try {
+      if (editing) {
+        const res = await client.put(`/supplier-invoice-archives/${archive.id}`, body);
+        toast.success(res.data.data.purchaseNumber ? `Serial ${body.serialNumber} updated — ${res.data.data.purchaseNumber} updated too.` : `Serial ${body.serialNumber} updated.`);
+      } else {
+        const res = await client.post('/supplier-invoice-archives', body);
+        toast.success(
+          res.data.data.purchaseNumber
+            ? `${res.data.data.archiveNumber} saved — added to Purchase Invoices as ${res.data.data.purchaseNumber} (${formatCurrency(res.data.data.grandTotal)} owed).`
+            : `Supplier invoice archive ${res.data.data.archiveNumber} saved.`
+        );
+      }
+      onSaved();
+    } catch (err) {
+      toast.error(err.friendlyMessage || 'Could not save this invoice.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={editing ? `Edit Invoice — ${archive.archiveNumber}` : 'Manual Entry Invoice'}
+      size="xl"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} loading={saving}>
+            <Save className="h-4 w-4" /> {editing ? 'Save Changes' : 'Save Archive'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500">Enter exactly what the supplier's paper invoice shows. With a supplier chosen, it is also added to Purchase Invoices (serial number and grand total, owed) — no need to enter it twice. Stock is never changed.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="Supplier (optional)">
+            <SupplierPicker active={supplier} onSelect={setSupplier} onClear={() => setSupplier(null)} />
+          </FormField>
+          <FormField label="Shop/Supplier Serial Number" required>
+            <Input value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} placeholder="e.g. 585858" />
+          </FormField>
+        </div>
+
+        <div className="max-h-[360px] overflow-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <colgroup>
+              <col className="w-[50%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[5%]" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 bg-slate-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-slate-500">Item Name</th>
+                <th className="px-2 py-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">Qty</th>
+                <th className="px-2 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Cost</th>
+                <th className="px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-slate-500">Total</th>
+                <th className="px-2 py-2" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {rows.map((row, i) => (
+                <tr key={i}>
+                  <td className="px-2 py-1.5">
+                    <input
+                      ref={(el) => { nameRefs.current[i] = el; }}
+                      value={row.itemName}
+                      onChange={(e) => setRow(i, 'itemName', e.target.value)}
+                      placeholder="Item name..."
+                      className="w-full rounded-md border border-transparent px-2 py-1.5 text-sm outline-none focus:border-brand-300 focus:ring-1 focus:ring-brand-200"
+                    />
+                  </td>
+                  <td className="px-1 py-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={row.quantity}
+                      onChange={(e) => setRow(i, 'quantity', e.target.value)}
+                      className="no-spinner w-full rounded-md border border-slate-200 px-2 py-1.5 text-center text-sm tabular-nums focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-200"
+                    />
+                  </td>
+                  <td className="px-1 py-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={row.cost}
+                      onChange={(e) => setRow(i, 'cost', e.target.value)}
+                      onKeyDown={(e) => handleLastCellKeyDown(i, e)}
+                      className="no-spinner w-full rounded-md border border-slate-200 px-2 py-1.5 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-200"
+                    />
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-sm font-semibold tabular-nums text-slate-900">
+                    {formatCurrency((Number(row.quantity) || 0) * (Number(row.cost) || 0))}
+                  </td>
+                  <td className="px-1 py-1.5 text-center">
+                    <button type="button" tabIndex={-1} onClick={() => removeRow(i)} className="rounded-md p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-600">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <button type="button" onClick={() => addRow()} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50">
+            <Plus className="h-3.5 w-3.5" /> Add Row
+          </button>
+          <div className="text-right">
+            <p className="text-xs uppercase text-slate-400">Grand Total</p>
+            <p className="text-lg font-bold text-slate-900">{formatCurrency(grandTotal)}</p>
+          </div>
+        </div>
+
+        <FormField label="Notes">
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={2000} placeholder="Optional" />
+        </FormField>
+      </div>
+    </Modal>
+  );
+}

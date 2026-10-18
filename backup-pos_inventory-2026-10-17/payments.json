@@ -1,0 +1,456 @@
+[
+ {
+  "_id": {
+   "$oid": "6aa391115ae4cdf7aee40aea"
+  },
+  "receiptNumber": "INV-2026-000001-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "1100"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa391115ae4cdf7aee40ae7"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "0"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789104401992"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789104401992"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa396935ae4cdf7aee40f19"
+  },
+  "receiptNumber": "INV-2026-000002-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "400"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa396935ae4cdf7aee40f16"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "400"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105811893"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105811893"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa396da5ae4cdf7aee40f67"
+  },
+  "receiptNumber": "INV-2026-000003-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "300"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa396da5ae4cdf7aee40f64"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "300"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105882441"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105882441"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa398705ae4cdf7aee41125"
+  },
+  "receiptNumber": "INV-2026-000005-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "400"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa398705ae4cdf7aee41122"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "400"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106288638"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106288638"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa399105ae4cdf7aee411fb"
+  },
+  "receiptNumber": "PAY-2026-000001",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "400"
+  },
+  "type": "debt_payment",
+  "relatedSale": null,
+  "allocations": [
+   {
+    "sale": {
+     "$oid": "6aa398705ae4cdf7aee41122"
+    },
+    "receiptNumber": "INV-2026-000005",
+    "amountCents": {
+     "$numberInt": "400"
+    }
+   }
+  ],
+  "previousBalanceCents": {
+   "$numberInt": "400"
+  },
+  "newBalanceCents": {
+   "$numberInt": "0"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106448398"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106448398"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa39a0b5ae4cdf7aee412d9"
+  },
+  "receiptNumber": "INV-2026-000006-PMT",
+  "customer": {
+   "$oid": "6aa399f95ae4cdf7aee412c7"
+  },
+  "amountCents": {
+   "$numberInt": "100"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa39a0b5ae4cdf7aee412d6"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "100"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106699119"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106699119"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa39a485ae4cdf7aee4133d"
+  },
+  "receiptNumber": "PAY-2026-000002",
+  "customer": {
+   "$oid": "6aa399f95ae4cdf7aee412c7"
+  },
+  "amountCents": {
+   "$numberInt": "100"
+  },
+  "type": "debt_payment",
+  "relatedSale": null,
+  "allocations": [
+   {
+    "sale": {
+     "$oid": "6aa39a0b5ae4cdf7aee412d6"
+    },
+    "receiptNumber": "INV-2026-000006",
+    "amountCents": {
+     "$numberInt": "100"
+    }
+   }
+  ],
+  "previousBalanceCents": {
+   "$numberInt": "100"
+  },
+  "newBalanceCents": {
+   "$numberInt": "0"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106760298"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106760298"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa40c835ae4cdf7aee414e3"
+  },
+  "receiptNumber": "INV-2026-000007-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "20000"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa40c835ae4cdf7aee414e0"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "1460"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789136003148"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789136003148"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa40ce55ae4cdf7aee41529"
+  },
+  "receiptNumber": "PAY-2026-000003",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "1460"
+  },
+  "type": "debt_payment",
+  "relatedSale": null,
+  "allocations": [
+   {
+    "sale": {
+     "$oid": "6aa40c835ae4cdf7aee414e0"
+    },
+    "receiptNumber": "INV-2026-000007",
+    "amountCents": {
+     "$numberInt": "1460"
+    }
+   }
+  ],
+  "previousBalanceCents": {
+   "$numberInt": "1460"
+  },
+  "newBalanceCents": {
+   "$numberInt": "0"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789136101460"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789136101460"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa456625ae4cdf7aee415e5"
+  },
+  "receiptNumber": "INV-2026-000008-PMT",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "amountCents": {
+   "$numberInt": "100"
+  },
+  "type": "sale",
+  "relatedSale": {
+   "$oid": "6aa456625ae4cdf7aee415e2"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "newBalanceCents": {
+   "$numberInt": "120"
+  },
+  "notes": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "allocations": [],
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789154914224"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789154914224"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ }
+]

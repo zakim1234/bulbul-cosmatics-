@@ -1,0 +1,893 @@
+[
+ {
+  "_id": {
+   "$oid": "6aa391115ae4cdf7aee40ae7"
+  },
+  "receiptNumber": "INV-2026-000001",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa38e70fb89f513d2640cd8"
+    },
+    "itemName": "Amoxicillin 500mg (Strip of 10)",
+    "sku": "AMOX-500",
+    "quantity": {
+     "$numberInt": "5"
+    },
+    "unitPriceCents": {
+     "$numberInt": "220"
+    },
+    "costPriceCents": {
+     "$numberInt": "120"
+    },
+    "subtotalCents": {
+     "$numberInt": "1100"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa391115ae4cdf7aee40ae3"
+      },
+      "supplier": {
+       "$oid": "6aa38e70fb89f513d2640cd2"
+      },
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "5"
+      },
+      "unitCostCents": {
+       "$numberInt": "120"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "1100"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "1100"
+  },
+  "paidAmountCents": {
+   "$numberInt": "1100"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "0"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "600"
+  },
+  "profitCents": {
+   "$numberInt": "500"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CONFIRMED",
+  "voidedAt": null,
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789104401983"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789104401983"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "confirmedAt": {
+   "$date": {
+    "$numberLong": "1789104401983"
+   }
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa396935ae4cdf7aee40f16"
+  },
+  "receiptNumber": "INV-2026-000002",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "4"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "800"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa396935ae4cdf7aee40f12"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "4"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "800"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "800"
+  },
+  "paidAmountCents": {
+   "$numberInt": "400"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "400"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "200"
+  },
+  "profitCents": {
+   "$numberInt": "600"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CANCELLED",
+  "voidedAt": {
+   "$date": {
+    "$numberLong": "1789105821735"
+   }
+  },
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105811886"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105821737"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "cancelledAt": {
+   "$date": {
+    "$numberLong": "1789105821735"
+   }
+  },
+  "cancelledReason": "",
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa396da5ae4cdf7aee40f64"
+  },
+  "receiptNumber": "INV-2026-000003",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "3"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "600"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa396935ae4cdf7aee40f12"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "3"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "600"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "600"
+  },
+  "paidAmountCents": {
+   "$numberInt": "300"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "300"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "150"
+  },
+  "profitCents": {
+   "$numberInt": "450"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CANCELLED",
+  "voidedAt": {
+   "$date": {
+    "$numberLong": "1789105938678"
+   }
+  },
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789105882435"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789105938680"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "cancelledAt": {
+   "$date": {
+    "$numberLong": "1789105938678"
+   }
+  },
+  "cancelledReason": "",
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa397805ae4cdf7aee40ff6"
+  },
+  "receiptNumber": "INV-2026-000004",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "1"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "200"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa396935ae4cdf7aee40f12"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "1"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "200"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "200"
+  },
+  "paidAmountCents": {
+   "$numberInt": "0"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "200"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "50"
+  },
+  "profitCents": {
+   "$numberInt": "150"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CANCELLED",
+  "voidedAt": {
+   "$date": {
+    "$numberLong": "1789106058397"
+   }
+  },
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106048706"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106058400"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "cancelledAt": {
+   "$date": {
+    "$numberLong": "1789106058397"
+   }
+  },
+  "cancelledReason": "",
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa398705ae4cdf7aee41122"
+  },
+  "receiptNumber": "INV-2026-000005",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "4"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "800"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa396935ae4cdf7aee40f12"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "4"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "800"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "800"
+  },
+  "paidAmountCents": {
+   "$numberInt": "400"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "400"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "200"
+  },
+  "profitCents": {
+   "$numberInt": "600"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CONFIRMED",
+  "voidedAt": null,
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106288631"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106448379"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "confirmedAt": {
+   "$date": {
+    "$numberLong": "1789106288631"
+   }
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa39a0b5ae4cdf7aee412d6"
+  },
+  "receiptNumber": "INV-2026-000006",
+  "customer": {
+   "$oid": "6aa399f95ae4cdf7aee412c7"
+  },
+  "customerName": "cabdiraxman",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "1"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "200"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa39a0b5ae4cdf7aee412d2"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "1"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "200"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "200"
+  },
+  "paidAmountCents": {
+   "$numberInt": "100"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "100"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "50"
+  },
+  "profitCents": {
+   "$numberInt": "150"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CONFIRMED",
+  "voidedAt": null,
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789106699115"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789106760282"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "confirmedAt": {
+   "$date": {
+    "$numberLong": "1789106699115"
+   }
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa40c835ae4cdf7aee414e0"
+  },
+  "receiptNumber": "INV-2026-000007",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa40aa75ae4cdf7aee414a5"
+    },
+    "itemName": "qalajiye",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "12"
+    },
+    "unitPriceCents": {
+     "$numberInt": "150"
+    },
+    "costPriceCents": {
+     "$numberInt": "100"
+    },
+    "subtotalCents": {
+     "$numberInt": "1800"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa40c835ae4cdf7aee414d2"
+      },
+      "supplier": {
+       "$oid": "6aa38e70fb89f513d2640cd2"
+      },
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "12"
+      },
+      "unitCostCents": {
+       "$numberInt": "100"
+      }
+     }
+    ]
+   },
+   {
+    "item": {
+     "$oid": "6aa392945ae4cdf7aee40ba0"
+    },
+    "itemName": "BARAMOL",
+    "sku": "",
+    "quantity": {
+     "$numberInt": "95"
+    },
+    "unitPriceCents": {
+     "$numberInt": "200"
+    },
+    "costPriceCents": {
+     "$numberInt": "50"
+    },
+    "subtotalCents": {
+     "$numberInt": "19000"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa40c835ae4cdf7aee414d7"
+      },
+      "supplier": null,
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "95"
+      },
+      "unitCostCents": {
+       "$numberInt": "50"
+      }
+     }
+    ]
+   },
+   {
+    "item": {
+     "$oid": "6aa38e70fb89f513d2640cd8"
+    },
+    "itemName": "Amoxicillin 500mg (Strip of 10)",
+    "sku": "AMOX-500",
+    "quantity": {
+     "$numberInt": "3"
+    },
+    "unitPriceCents": {
+     "$numberInt": "220"
+    },
+    "costPriceCents": {
+     "$numberInt": "120"
+    },
+    "subtotalCents": {
+     "$numberInt": "660"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa40c835ae4cdf7aee414dc"
+      },
+      "supplier": {
+       "$oid": "6aa38e70fb89f513d2640cd2"
+      },
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "3"
+      },
+      "unitCostCents": {
+       "$numberInt": "120"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "21460"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "21460"
+  },
+  "paidAmountCents": {
+   "$numberInt": "20000"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "1460"
+  },
+  "outstandingCents": {
+   "$numberInt": "0"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "6310"
+  },
+  "profitCents": {
+   "$numberInt": "15150"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CONFIRMED",
+  "voidedAt": null,
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789136003140"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789136101446"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "confirmedAt": {
+   "$date": {
+    "$numberLong": "1789136003140"
+   }
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ },
+ {
+  "_id": {
+   "$oid": "6aa456625ae4cdf7aee415e2"
+  },
+  "receiptNumber": "INV-2026-000008",
+  "customer": {
+   "$oid": "6aa390ef5ae4cdf7aee40ad8"
+  },
+  "customerName": "cumar",
+  "items": [
+   {
+    "item": {
+     "$oid": "6aa38e70fb89f513d2640cd8"
+    },
+    "itemName": "Amoxicillin 500mg (Strip of 10)",
+    "sku": "AMOX-500",
+    "quantity": {
+     "$numberInt": "1"
+    },
+    "unitPriceCents": {
+     "$numberInt": "220"
+    },
+    "costPriceCents": {
+     "$numberInt": "120"
+    },
+    "subtotalCents": {
+     "$numberInt": "220"
+    },
+    "lotConsumption": [
+     {
+      "lot": {
+       "$oid": "6aa456625ae4cdf7aee415de"
+      },
+      "supplier": {
+       "$oid": "6aa38e70fb89f513d2640cd2"
+      },
+      "purchase": null,
+      "quantity": {
+       "$numberInt": "1"
+      },
+      "unitCostCents": {
+       "$numberInt": "120"
+      }
+     }
+    ]
+   }
+  ],
+  "subtotalCents": {
+   "$numberInt": "220"
+  },
+  "discountCents": {
+   "$numberInt": "0"
+  },
+  "totalCents": {
+   "$numberInt": "220"
+  },
+  "paidAmountCents": {
+   "$numberInt": "100"
+  },
+  "balanceAddedCents": {
+   "$numberInt": "120"
+  },
+  "outstandingCents": {
+   "$numberInt": "120"
+  },
+  "costOfGoodsCents": {
+   "$numberInt": "120"
+  },
+  "profitCents": {
+   "$numberInt": "100"
+  },
+  "previousBalanceCents": {
+   "$numberInt": "0"
+  },
+  "status": "CONFIRMED",
+  "voidedAt": null,
+  "voidedReason": "",
+  "createdBy": {
+   "$oid": "6aa38e70fb89f513d2640cc7"
+  },
+  "createdAt": {
+   "$date": {
+    "$numberLong": "1789154914217"
+   }
+  },
+  "updatedAt": {
+   "$date": {
+    "$numberLong": "1789154914217"
+   }
+  },
+  "__v": {
+   "$numberInt": "0"
+  },
+  "confirmedAt": {
+   "$date": {
+    "$numberLong": "1789154914217"
+   }
+  },
+  "branch": {
+   "$oid": "6ad24659b6ed0fb15987c041"
+  }
+ }
+]
