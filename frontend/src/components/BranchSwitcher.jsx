@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Store, Globe2, LogOut } from 'lucide-react';
-import client, { getSelectedBranch, setSelectedBranch } from '../api/client.js';
+import client, { getSelectedBranch, setSelectedBranch, getViewBranch, setViewBranch } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 // Sidebar strip showing where this screen is working. The Super Admin is
@@ -34,11 +34,19 @@ export default function BranchSwitcher() {
 
   const go = (id) => {
     setSelectedBranch(id);
+    setViewBranch(null);
     // Every page reloads for the newly chosen place.
     window.location.href = id ? '/dashboard' : '/super-dashboard';
   };
 
   if (!inside) {
+    const view = getViewBranch();
+    // "Show": look at one branch's figures without leaving the overview.
+    const show = (id) => {
+      const b = branches.find((x) => String(x.id) === id);
+      setViewBranch(b ? { id: b.id, name: b.name } : null);
+      window.location.reload();
+    };
     return (
       <label className="mx-3 mb-3 block rounded-xl bg-white/[0.07] px-3 py-2 ring-1 ring-white/10">
         <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-gold-300">
