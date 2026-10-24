@@ -320,11 +320,10 @@ export default function CustomerWalletSection({ customerId, customerName, wallet
                 <HandCoins className="h-4 w-4" /> Pay debt from wallet
               </Button>
             )}
-            <Link
-              to={`/customers/${customerId}/wallet-statement`}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              <FileText className="h-4 w-4" /> Wallet statement
+            <Link to={`/customers/${customerId}/wallet-statement`}>
+              <Button variant="secondary">
+                <FileText className="h-4 w-4" /> Wallet statement
+              </Button>
             </Link>
             {walletBalance > 0 && (
               <Button variant="secondary" onClick={() => setWithdrawOpen(true)}>

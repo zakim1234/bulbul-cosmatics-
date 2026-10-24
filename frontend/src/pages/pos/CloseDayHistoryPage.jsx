@@ -318,11 +318,10 @@ function DayCard({ day, open, onToggle, isAdmin, onReopen }) {
       {open && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/50 px-4 pt-4 sm:px-5">
           <p className="text-sm text-slate-500">Each item sold this day: quantity, cost, selling price and profit.</p>
-          <Link
-            to={`/daily-closing/items?date=${encodeURIComponent(day.businessDate)}`}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
-          >
-            <PackageCheck className="h-4 w-4" /> Items sold report
+          <Link to={`/daily-closing/items?date=${encodeURIComponent(day.businessDate)}`}>
+            <Button>
+              <PackageCheck className="h-4 w-4" /> Items sold report
+            </Button>
           </Link>
         </div>
       )}
