@@ -1,15 +1,21 @@
+import mongoose from 'mongoose';
 import InventoryLot from '../models/InventoryLot.js';
-import { batchSummary } from '../services/batchService.js';
+import { batchSummary, batchSummaries } from '../services/batchService.js';
 import InventoryItem from '../models/InventoryItem.js';
 import Category from '../models/Category.js';
 import Sale from '../models/Sale.js';
 import Purchase from '../models/Purchase.js';
+import StockRevaluation from '../models/StockRevaluation.js';
 import { nextSequence } from '../models/Counter.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { toCents, fromCents } from '../utils/money.js';
 import { logAudit } from '../services/auditService.js';
 import { renameItemEverywhere } from '../services/itemRenameService.js';
+import { createStockAdjustment } from '../services/stockAdjustmentService.js';
+import { runInTransaction } from '../utils/transaction.js';
+import { userHas } from '../models/User.js';
+import { escapeRegex, sameNameFilter, NAME_ORDER, startsWith, codeMatch, wordStart } from '../utils/regex.js';
 
 function toDTO(item) {
   const obj = item.toObject ? item.toObject({ virtuals: true }) : item;
@@ -56,16 +62,17 @@ async function generateItemCode() {
 }
 
 async function buildFilter(query) {
-  const { search, category, supplier, stockFilter, expiryFilter } = query;
+  const { category, supplier, stockFilter, expiryFilter } = query;
+  const search = escapeRegex(String(query.search ?? '').trim());
   const filter = {};
 
-  if (search && search.trim()) {
+  if (search) {
     filter.$or = [
-      { name: { $regex: search.trim(), $options: 'i' } },
-      { itemCode: { $regex: search.trim(), $options: 'i' } },
-      { serialNumber: { $regex: search.trim(), $options: 'i' } },
-      { barcode: { $regex: search.trim(), $options: 'i' } },
-      { genericName: { $regex: search.trim(), $options: 'i' } },
+      { name: startsWith(search) },
+      { itemCode: codeMatch(search) },
+      { serialNumber: codeMatch(search) },
+      { barcode: codeMatch(search) },
+      { genericName: wordStart(search) },
     ];
   }
   if (category) filter.category = category;
@@ -75,6 +82,9 @@ async function buildFilter(query) {
     filter.$expr = { $and: [{ $gt: ['$quantity', 0] }, { $lte: ['$quantity', '$lowStockThreshold'] }] };
   } else if (stockFilter === 'out_of_stock') {
     filter.quantity = { $lte: 0 };
+  } else if (stockFilter === 'minus') {
+    // Sold more than was in stock: the quantity is below zero (e.g. -19).
+    filter.quantity = { $lt: 0 };
   } else if (stockFilter === 'in_stock') {
     filter.$expr = { $gt: ['$quantity', '$lowStockThreshold'] };
   }
@@ -90,26 +100,52 @@ async function buildFilter(query) {
 
 // GET /api/inventory
 export const listInventory = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 20, sortBy = 'createdAt', sortDir = 'desc' } = req.query;
+  const { page = 1, limit = 20, sortBy = 'name', sortDir = 'asc' } = req.query;
   const filter = await buildFilter(req.query);
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 20));
-  const sort = { [sortBy]: sortDir === 'asc' ? 1 : -1 };
+  // Names A to Z with upper and lower case alike; _id keeps the order the
+  // same from one part of the list to the next.
+  const sort = { [sortBy]: sortDir === 'asc' ? 1 : -1, _id: 1 };
 
-  const [items, total] = await Promise.all([
+  // Totals over every item matching the filters (not just this page): units,
+  // and their value at cost and at selling price.
+  const [items, total, [sums]] = await Promise.all([
     InventoryItem.find(filter)
       .populate('supplier', 'name')
       .populate('category', 'name')
+      .collation(NAME_ORDER)
       .sort(sort)
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
     InventoryItem.countDocuments(filter),
+    InventoryItem.aggregate([
+      // Aggregation does not cast ids the way find() does.
+      { $match: { ...filter, ...(filter.category ? { category: new mongoose.Types.ObjectId(String(filter.category)) } : {}), ...(filter.supplier ? { supplier: new mongoose.Types.ObjectId(String(filter.supplier)) } : {}) } },
+      {
+        $group: {
+          _id: null,
+          units: { $sum: '$quantity' },
+          costCents: { $sum: { $multiply: ['$quantity', '$costPriceCents'] } },
+          sellCents: { $sum: { $multiply: ['$quantity', '$sellingPriceCents'] } },
+        },
+      },
+    ]),
   ]);
 
+  // The stock's totals (cost, sell value, profit) are for the admin only.
+  const seesTotals = req.user.role === 'admin' || req.user.isSuperAdmin;
   res.json({
+    summary: seesTotals ? {
+      items: total,
+      units: sums?.units || 0,
+      totalCost: fromCents(sums?.costCents || 0),
+      totalSell: fromCents(sums?.sellCents || 0),
+      profit: fromCents((sums?.sellCents || 0) - (sums?.costCents || 0)),
+    } : null,
     success: true,
-    data: await Promise.all(items.map(async item => ({ ...toDTO(item), ...await batchSummary(item, false) }))),
+    data: await batchSummaries(items).then((summaries) => items.map((item, i) => ({ ...toDTO(item), ...summaries[i] }))),
     pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) },
   });
 });
@@ -117,24 +153,38 @@ export const listInventory = asyncHandler(async (req, res) => {
 // GET /api/inventory/search?q= -- used by the Seller/POS row item picker and
 // by inventory serial-number search
 export const searchInventory = asyncHandler(async (req, res) => {
-  const q = (req.query.q || '').trim();
+  const q = escapeRegex(String(req.query.q ?? '').trim());
   if (!q) return res.json({ success: true, data: [] });
 
   const items = await InventoryItem.find({
     status: 'active',
     $or: [
-      { name: { $regex: q, $options: 'i' } },
-      { itemCode: { $regex: q, $options: 'i' } },
-      { serialNumber: { $regex: q, $options: 'i' } },
-      { barcode: { $regex: q, $options: 'i' } },
-      { genericName: { $regex: q, $options: 'i' } },
+      { name: startsWith(q) },
+      { itemCode: codeMatch(q) },
+      { serialNumber: codeMatch(q) },
+      { barcode: codeMatch(q) },
+      { genericName: wordStart(q) },
     ],
   })
     .populate('category', 'name')
-    .limit(15)
+    .collation(NAME_ORDER)
     .sort({ name: 1 });
 
-  res.json({ success: true, data: await Promise.all(items.map(async item => ({ ...toDTO(item), ...await batchSummary(item, false) }))) });
+  // Every match, not the first few: "c" lists every item starting with c.
+  const summaries = await batchSummaries(items);
+  res.json({ success: true, data: items.map((item, i) => ({ ...toDTO(item), ...summaries[i] })) });
+});
+
+// GET /api/inventory/names -- every item's name with its quantity, average
+// cost and selling price, read once when a long entry form opens, so the
+// form can tell at once (no waiting while typing) whether a typed name is
+// already in stock.
+export const listItemNames = asyncHandler(async (req, res) => {
+  const items = await InventoryItem.find().select('name quantity costPriceCents sellingPriceCents').lean();
+  res.json({
+    success: true,
+    data: items.map((i) => ({ id: i._id, name: i.name, quantity: i.quantity, costPrice: fromCents(i.costPriceCents), sellingPrice: fromCents(i.sellingPriceCents) })),
+  });
 });
 
 export const getInventoryItem = asyncHandler(async (req, res) => {
@@ -200,6 +250,14 @@ async function assertBarcodeAvailable(barcode, excludeId = null) {
   if (existing) throw new ApiError(409, `Barcode "${barcode}" is already assigned to another item.`);
 }
 
+// An item is never created (or renamed into) a name another item has.
+async function assertNameAvailable(name, excludeId = null) {
+  const filter = sameNameFilter(name);
+  if (excludeId) filter._id = { $ne: excludeId };
+  const existing = await InventoryItem.findOne(filter).select('name itemCode');
+  if (existing) throw new ApiError(409, `An item named "${existing.name}" (${existing.itemCode}) already exists. Use that item instead of adding it again.`);
+}
+
 function parseMinimumStock(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) throw new ApiError(400, 'Minimum stock must be a whole number of 0 or more.');
@@ -210,6 +268,7 @@ export const createInventoryItem = asyncHandler(async (req, res) => {
   const body = req.body;
   if (Number(body.quantity || 0) !== 0) throw new ApiError(400, 'Add physical goods through Stock.');
   if (!body.name || !body.name.trim()) throw new ApiError(400, 'Item name is required.');
+  await assertNameAvailable(body.name);
   if (body.costPrice === undefined || body.sellingPrice === undefined) {
     throw new ApiError(400, 'Cost price and selling price are required.');
   }
@@ -268,6 +327,7 @@ export const updateInventoryItem = asyncHandler(async (req, res) => {
   const body = req.body;
   if (body.name !== undefined) {
     if (!body.name.trim()) throw new ApiError(400, 'Item name cannot be empty.');
+    await assertNameAvailable(body.name, item._id);
     item.name = body.name.trim();
   }
   if (body.serialNumber !== undefined) {
@@ -287,15 +347,24 @@ export const updateInventoryItem = asyncHandler(async (req, res) => {
   if (body.category !== undefined) {
     item.category = await assertCategoryExists(body.category || null);
   }
-  if (body.quantity !== undefined) {
-    if (Number(body.quantity) < 0) throw new ApiError(400, 'Quantity cannot be negative.');
-    if (Number(body.quantity) !== item.quantity) throw new ApiError(400, 'Change stock through Stock entries.');
+  // A changed quantity is a stock adjustment (batches kept right, numbered,
+  // can be undone). Only the Super Admin, or an admin they allowed.
+  let quantityChange = 0;
+  if (body.quantity !== undefined && Number(body.quantity) !== item.quantity) {
+    const wanted = Number(body.quantity);
+    if (!Number.isSafeInteger(wanted) || wanted < 0) throw new ApiError(400, 'Quantity must be a whole number, 0 or more.');
+    if (!userHas(req.user, 'editItemQuantity')) throw new ApiError(403, 'You do not have permission to change the quantity.');
+    quantityChange = wanted - item.quantity;
   }
   if (body.unit !== undefined) item.unit = body.unit;
+  const oldCostCents = item.costPriceCents;
   if (body.costPrice !== undefined) {
     if (Number(body.costPrice) < 0) throw new ApiError(400, 'Cost price cannot be negative.');
-    item.costPriceCents = toCents(body.costPrice);
+    // The form sends the average back rounded to the cent: unless it was
+    // really changed, the exact average stays as it is.
+    if (toCents(body.costPrice) !== Math.round(item.costPriceCents)) item.costPriceCents = toCents(body.costPrice);
   }
+  const costChanged = item.costPriceCents !== oldCostCents;
   if (body.sellingPrice !== undefined) {
     if (Number(body.sellingPrice) < 0) throw new ApiError(400, 'Selling price cannot be negative.');
     item.sellingPriceCents = toCents(body.sellingPrice);
@@ -304,7 +373,41 @@ export const updateInventoryItem = asyncHandler(async (req, res) => {
   if (body.supplier !== undefined) item.supplier = body.supplier || null;
   if (body.status !== undefined) item.status = body.status;
 
-  await item.save();
+  await item.validate();
+  // A new cost price on stock in hand changes what the stock is worth: that
+  // difference is saved with it as a gain or loss (Profit & Loss), so the
+  // Balance Sheet stays balanced.
+  const saveItem = () =>
+    costChanged
+      ? runInTransaction(async (session) => {
+          await item.save({ session });
+          const { quantity } = await InventoryItem.findById(item._id).session(session).select('quantity').lean();
+          const changeCents = quantity * (item.costPriceCents - oldCostCents);
+          if (changeCents) {
+            await StockRevaluation.create(
+              [{ item: item._id, itemName: item.name, quantity, oldCostCents, newCostCents: item.costPriceCents, changeCents, createdBy: req.user?._id || null, createdByName: req.user?.name || '' }],
+              { session }
+            );
+          }
+        })
+      : item.save();
+  // First, so a refused quantity (units held by a pending invoice) saves nothing.
+  if (quantityChange) {
+    const adjustment = await runInTransaction((session) =>
+      createStockAdjustment(session, {
+        itemId: item._id,
+        direction: quantityChange < 0 ? 'DECREASE' : 'INCREASE',
+        quantity: Math.abs(quantityChange),
+        reason: 'COUNT_CORRECTION',
+        note: 'Quantity changed in the Inventory edit window',
+        user: req.user,
+      })
+    );
+    await saveItem();
+    item.quantity = adjustment.quantityAfter;
+  } else {
+    await saveItem();
+  }
   // A corrected name also goes onto every past invoice/document with this item.
   const renamedLines = body.name !== undefined ? await renameItemEverywhere(item._id, item.name) : 0;
   await item.populate('category', 'name');

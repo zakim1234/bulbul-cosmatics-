@@ -15,7 +15,7 @@ async function setup(dbName) {
   await mongoose.connect(`mongodb://127.0.0.1:27028/${dbName}_${Date.now()}?replicaSet=stocktest`);
   process.env.JWT_SECRET = 'isolated-wac-test-secret';
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
-  const user = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused' }); // default role: admin
+  const user = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', adminGranted: ['paySuppliers'] }); // default role: admin
   const supplier = await Supplier.create({ name: 'ABC Pharma' });
   const account = await Account.create({ name: 'EVC' });
   const customer = await Customer.create({ name: 'Walk-in' });
@@ -208,8 +208,8 @@ test('TEST 10 -- customer return blends WAC at historical cost; original invoice
     assert.equal(ret.status, 200, JSON.stringify(ret));
     item = await InventoryItem.findById(item.id);
     assert.equal(item.quantity, 64); // 60 + 4
-    // (60*700 + 4*400) / 64 = (42000+1600)/64 = 43600/64 = 681.25 -> 681
-    assert.equal(item.costPriceCents, 681);
+    // (60*700 + 4*400) / 64 = (42000+1600)/64 = 43600/64 = 681.25, kept exact
+    assert.equal(item.costPriceCents, 681.25);
 
     // The original invoice's OTHER (non-returned) line data remains intact
     // -- historical cost snapshot on the sale is untouched by the return
@@ -223,7 +223,7 @@ test('TEST 10 -- customer return blends WAC at historical cost; original invoice
     const returnEvent = item.stockEvents.find((e) => e.type === 'CUSTOMER_RETURN');
     assert.ok(returnEvent, 'expected a CUSTOMER_RETURN stock event');
     assert.equal(returnEvent.averageCostBeforeCents, 700);
-    assert.equal(returnEvent.averageCostAfterCents, 681);
+    assert.equal(returnEvent.averageCostAfterCents, 681.25);
   } finally {
     await teardown(server);
   }
@@ -297,8 +297,8 @@ test('TEST 13 -- concurrent Stock IN receipts for the same item: no lost update'
     assert.equal(final.quantity, 30);
     // Total inventory value must reflect ALL THREE receipts regardless of
     // which order the two concurrent ones actually committed in:
-    // 10*200 + 10*400 + 10*800 = 14000, / 30 = 466.66... -> 467.
-    assert.equal(final.costPriceCents, 467);
+    // 10*200 + 10*400 + 10*800 = 14000, / 30 = 466.66..., kept exact (no cent lost).
+    assert.ok(Math.abs(final.costPriceCents - 14000 / 30) < 1e-9, String(final.costPriceCents));
   } finally {
     await teardown(server);
   }

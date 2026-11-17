@@ -10,13 +10,20 @@ const customerLedgerSchema = new mongoose.Schema(
     customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
     type: {
       type: String,
-      enum: ['SALE_CREDIT', 'PAYMENT', 'ADJUSTMENT', 'SALE_VOID', 'SALE_RETURN', 'REFUND', 'PAYMENT_CANCELLED'],
+      // LOAN: money lent to the customer in cash (no goods): +debt; its
+      // cancel is a LOAN with a minus amount.
+      enum: ['SALE_CREDIT', 'PAYMENT', 'ADJUSTMENT', 'SALE_VOID', 'SALE_RETURN', 'REFUND', 'PAYMENT_CANCELLED', 'LOAN'],
       required: true,
     },
     amountCents: { type: Number, required: true }, // signed: +increases debt, -decreases debt
     sale: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', default: null },
     payment: { type: mongoose.Schema.Types.ObjectId, ref: 'Payment', default: null },
     description: { type: String, default: '' },
+    // A loan: its number (LOAN-YYYY-NNNN), the account the money came from,
+    // and whether it was cancelled (by a second, opposite LOAN line).
+    reference: { type: String, default: '' },
+    account: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+    cancelledAt: { type: Date, default: null },
     balanceBeforeCents: { type: Number, required: true },
     balanceAfterCents: { type: Number, required: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

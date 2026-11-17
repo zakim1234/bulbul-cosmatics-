@@ -5,12 +5,17 @@ import { branchScoped } from '../services/branchContext.js';
 // expense that paid it.
 const rowSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    // A system user, or a worker with no login (models/Worker.js) -- one of the two.
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    worker: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null },
     name: { type: String, required: true },
     role: { type: String, default: '' },
     amountCents: { type: Number, required: true, min: 0 },
     expense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null },
     expenseNumber: { type: String, default: '' },
+    // Charged now, paid later: the line on the Liabilities page instead of
+    // an expense paid from an account.
+    liability: { type: mongoose.Schema.Types.ObjectId, ref: 'Liability', default: null },
   },
   { _id: false }
 );
@@ -29,6 +34,8 @@ const schema = new mongoose.Schema(
     note: { type: String, default: '', maxlength: 500 },
     paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
     paymentAccountName: { type: String, default: '' },
+    // Paid "later": every line went to Liabilities (no account moved).
+    toLiabilities: { type: Boolean, default: false },
     paymentDate: { type: Date, default: null },
     paidAt: { type: Date, default: null },
     paidByName: { type: String, default: '' },

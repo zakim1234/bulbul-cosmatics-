@@ -25,9 +25,16 @@ export default function ExpenseFormModal({ open, onClose, onSaved, categories, o
   const [form, setForm] = useState(emptyForm);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  // 'later': charged now as an expense but not paid -- it goes to the
+  // Liabilities page and is paid from the right account there later.
+  // For the admin (who manages Liabilities).
+  const canPayLater = user?.role === 'admin';
+  const [when, setWhen] = useState('now');
+  const later = canPayLater && when === 'later';
 
   useEffect(() => {
     if (open) {
+      setWhen('now');
       setForm(emptyForm());
       setErrors({});
       setNewCategory('');
@@ -55,7 +62,7 @@ export default function ExpenseFormModal({ open, onClose, onSaved, categories, o
     const e = {};
     if (!form.category || form.category === NEW_CATEGORY) e.category = 'Select a category.';
     if (!(Number(form.amount) > 0)) e.amount = 'Enter an amount greater than zero.';
-    if (!form.paymentAccountId) e.paymentAccountId = 'Select the account this was paid from.';
+    if (!later && !form.paymentAccountId) e.paymentAccountId = 'Select the account this was paid from.';
     if (!form.date) e.date = 'Select a date.';
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -66,8 +73,13 @@ export default function ExpenseFormModal({ open, onClose, onSaved, categories, o
     if (!validate()) return;
     setSaving(true);
     try {
-      await client.post('/expenses', { ...form, amount: Number(form.amount) });
-      toast.success('Expense saved and deducted from the account.');
+      if (later) {
+        await client.post('/expenses', { ...form, paymentAccountId: undefined, payLater: true, amount: Number(form.amount) });
+        toast.success('Expense charged (it is in this month\'s expenses) and put on the Liabilities page -- pay it from the right account there when the money comes.');
+      } else {
+        await client.post('/expenses', { ...form, amount: Number(form.amount) });
+        toast.success('Expense saved and deducted from the account.');
+      }
       onSaved();
       onClose();
     } catch (err) {
@@ -107,18 +119,33 @@ export default function ExpenseFormModal({ open, onClose, onSaved, categories, o
             <Input type="date" value={form.date} onChange={set('date')} error={errors.date} />
           </FormField>
         </div>
-        <FormField label="Payment Account" required error={errors.paymentAccountId}>
-          <AccountSelect value={form.paymentAccountId} onChange={(id) => setForm((f) => ({ ...f, paymentAccountId: id || '' }))} />
-        </FormField>
+        {canPayLater && (
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              ['now', 'Pay now', 'From an account today'],
+              ['later', 'Pay later', 'Expense now, to Liabilities -- no account moves'],
+            ].map(([key, label, hint]) => (
+              <button key={key} type="button" onClick={() => setWhen(key)} className={`rounded-xl border px-3 py-2 text-left text-sm ${when === key ? 'border-brand-400 bg-brand-50' : 'border-neutral-200 hover:border-neutral-300'}`}>
+                <span className="block font-semibold text-neutral-900">{label}</span>
+                <span className="block text-xs text-neutral-500">{hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {!later && (
+          <FormField label="Payment Account" required error={errors.paymentAccountId}>
+            <AccountSelect value={form.paymentAccountId} onChange={(id) => setForm((f) => ({ ...f, paymentAccountId: id || '' }))} />
+          </FormField>
+        )}
         <FormField label="Note">
           <Textarea rows={2} maxLength={500} value={form.note} onChange={set('note')} placeholder="e.g. Cumar's salary" />
         </FormField>
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <div className="flex justify-end gap-2 border-t border-neutral-100 pt-4">
           <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
           <Button type="submit" loading={saving}>
-            Save Expense
+            {later ? 'Save -- pay later' : 'Save Expense'}
           </Button>
         </div>
       </form>

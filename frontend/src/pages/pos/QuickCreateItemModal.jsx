@@ -50,7 +50,7 @@ export default function QuickCreateItemModal({ open, initialName, onClose, onCre
         initialQuantity: Number(form.initialQuantity),
         cost: form.cost === '' ? null : Number(form.cost),
       });
-      toast.success(`"${res.data.data.name}" created with ${form.initialQuantity} in Stock and added to the sale.`);
+      toast.success(`"${res.data.data.name}" created and ${form.initialQuantity} put on the sale. Add its stock from Supplier Invoices.`);
       onCreated({ ...res.data.data, saleQuantity: Number(form.initialQuantity) });
     } catch (err) {
       toast.error(err.friendlyMessage || 'Could not create this item.');
@@ -81,21 +81,21 @@ export default function QuickCreateItemModal({ open, initialName, onClose, onCre
           <FormField label="Selling Price" required error={errors.sellingPrice}>
             <Input type="number" min="0" step="0.01" value={form.sellingPrice} onChange={set('sellingPrice')} placeholder="0.00" error={errors.sellingPrice} />
           </FormField>
-          <FormField label="Initial Qty" required error={errors.initialQuantity}>
+          <FormField label="Qty on this sale" required error={errors.initialQuantity}>
             <Input type="number" min="1" step="1" value={form.initialQuantity} onChange={set('initialQuantity')} placeholder="0" error={errors.initialQuantity} />
           </FormField>
         </div>
         <FormField label="Cost (optional)" error={errors.cost}>
           <Input type="number" min="0" step="0.01" value={form.cost} onChange={set('cost')} placeholder="0.00" error={errors.cost} />
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-xs text-neutral-400">
             The purchase cost per unit, if you know it — it becomes the item's starting Average Cost. Left blank, the cost is 0 and profit on this item will look like 100%
             until a real purchase is recorded.
           </p>
         </FormField>
         <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
-          Saving adds the item to Inventory, receives the Initial Qty into Stock, and puts that quantity on this sale.
+          Saving adds the item to Inventory (no stock yet) and puts that quantity on this sale. Its stock is added from Supplier Invoices → Manual Entry Invoice, which also records what is owed to the supplier.
         </p>
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <div className="flex justify-end gap-2 border-t border-neutral-100 pt-4">
           <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>

@@ -21,17 +21,42 @@ import userRoutes from './routes/users.js';
 import expenseRoutes from './routes/expenses.js';
 import salaryRoutes from './routes/salaries.js';
 import commissionRoutes from './routes/commissions.js';
+import offsetRoutes from './routes/offsets.js';
 import branchRoutes from './routes/branches.js';
 import quickItemRoutes from './routes/quickItems.js';
 import partnerRoutes from './routes/partners.js';
 import fixedAssetRoutes from './routes/fixedAssets.js';
+import liabilityRoutes from './routes/liabilities.js';
 import zakatRoutes from './routes/zakat.js';
 import stockAdjustmentRoutes from './routes/stockAdjustments.js';
+import chatRoutes from './routes/chat.js';
+import companyWalletRoutes from './routes/companyWallets.js';
 
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js';
+import { rejectOperatorKeys } from './middleware/noOperators.js';
 import { ApiError } from './utils/ApiError.js';
 
 const app = express();
+
+// Behind nginx on the same machine: req.ip is the visitor's address taken
+// from X-Forwarded-For -- trusted only when nginx (loopback) sent it, so a
+// visitor cannot fake it. Used by the login attempt limit.
+app.set('trust proxy', 'loopback');
+// Do not announce the framework ("X-Powered-By: Express").
+app.disable('x-powered-by');
+// Basic protection headers on every API answer: no MIME sniffing, never
+// shown inside another site's frame, no referrer, never cached (the answers
+// hold business data), and HTTPS only from now on when served over HTTPS.
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
 
 // CLIENT_ORIGIN is a comma-separated allowlist (deployed frontend origin(s)
 // plus, for local development, the Vite dev server origin). Requests with no
@@ -55,7 +80,9 @@ app.use(
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Branch-Id'],
   })
 );
-app.use(express.json({ limit: '2mb' }));
+// Large enough for a stock list or invoice of tens of thousands of rows.
+app.use(express.json({ limit: '100mb' }));
+app.use(rejectOperatorKeys);
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
@@ -83,12 +110,16 @@ app.use('/api/users', userRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/salaries', salaryRoutes);
 app.use('/api/commissions', commissionRoutes);
+app.use('/api/offsets', offsetRoutes);
 app.use('/api/branches', branchRoutes);
 app.use('/api/quick-items', quickItemRoutes);
 app.use('/api/partners', partnerRoutes);
 app.use('/api/fixed-assets', fixedAssetRoutes);
+app.use('/api/liabilities', liabilityRoutes);
 app.use('/api/zakat', zakatRoutes);
 app.use('/api/stock-adjustments', stockAdjustmentRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/company-wallets', companyWalletRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -9,8 +9,8 @@ const INITIAL_BLANK_ROWS = 3;
 let blankSeq = 0;
 const newBlankId = () => ++blankSeq;
 
-const HEAD = 'px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-500';
-const CELL_INPUT = 'no-spinner w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm tabular-nums focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-200';
+const HEAD = 'px-3 py-2 text-xs font-medium uppercase tracking-wide text-neutral-500';
+const CELL_INPUT = 'no-spinner w-full rounded-md border border-neutral-200 px-2 py-1.5 text-sm tabular-nums focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-200';
 
 // The item cell of an empty row: searches Stock/Inventory by name, item ID or
 // serial number. Unlike a sale, a quotation reserves no stock, so items that
@@ -108,6 +108,7 @@ function ItemSearchCell({ onSelect, inputRef }) {
       e.preventDefault();
       choose(results[highlighted]);
     } else if (e.key === 'Escape') {
+      e.preventDefault(); // closes the list only, not the page (Esc = Back)
       setOpen(false);
     }
   };
@@ -116,7 +117,7 @@ function ItemSearchCell({ onSelect, inputRef }) {
 
   return (
     <div ref={wrapRef} className="relative">
-      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-400" />
       <input
         ref={inputRef}
         value={query}
@@ -129,17 +130,17 @@ function ItemSearchCell({ onSelect, inputRef }) {
         onKeyDown={handleKeyDown}
         placeholder="Search item..."
         autoComplete="off"
-        className="w-full rounded-md border border-transparent bg-transparent py-1.5 pl-7 pr-2 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-brand-300 focus:bg-white focus:ring-1 focus:ring-brand-200"
+        className="w-full rounded-md border border-transparent bg-transparent py-1.5 pl-7 pr-2 text-sm text-neutral-800 outline-none transition-colors placeholder:text-neutral-400 focus:border-brand-300 focus:bg-white focus:ring-1 focus:ring-brand-200"
       />
       {showDropdown &&
         createPortal(
           <div
             ref={dropRef}
             style={{ position: 'fixed', zIndex: 60, left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom }}
-            className="max-w-[calc(100vw-16px)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+            className="max-w-[calc(100vw-16px)] overflow-hidden rounded-lg border border-neutral-200/80 bg-white shadow-lg"
           >
             {results.length === 0 ? (
-              <div className="px-3 py-3 text-xs text-slate-500">{searched ? 'No matching item in Stock.' : 'Searching...'}</div>
+              <div className="px-3 py-3 text-xs text-neutral-500">{searched ? 'No matching item in Stock.' : 'Searching...'}</div>
             ) : (
               <ul className="max-h-64 overflow-y-auto py-1">
                 {results.map((r, i) => {
@@ -152,16 +153,16 @@ function ItemSearchCell({ onSelect, inputRef }) {
                           e.preventDefault();
                           choose(r);
                         }}
-                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left ${i === highlighted ? 'bg-brand-50' : 'hover:bg-slate-50'}`}
+                        className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left ${i === highlighted ? 'bg-brand-50' : 'hover:bg-neutral-50'}`}
                       >
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-slate-800">{r.name}</p>
-                          <p className={`truncate text-xs ${out ? 'font-medium text-amber-600' : 'text-slate-400'}`}>
+                          <p className="truncate text-sm font-medium text-neutral-800">{r.name}</p>
+                          <p className={`truncate text-xs ${out ? 'font-medium text-brand-600' : 'text-neutral-400'}`}>
                             {r.itemCode}
                             {r.serialNumber ? ` · SN: ${r.serialNumber}` : ''} · Stock: {Math.max(0, r.availableQuantity ?? 0)} {r.unit || ''}
                           </p>
                         </div>
-                        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatCurrency(r.sellingPrice)}</span>
+                        <span className="shrink-0 text-sm font-semibold tabular-nums text-neutral-700">{formatCurrency(r.sellingPrice)}</span>
                       </button>
                     </li>
                   );
@@ -182,7 +183,7 @@ function RemoveButton({ onClick, disabled }) {
       tabIndex={-1}
       disabled={disabled}
       onClick={onClick}
-      className="rounded-md p-1.5 text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"
+      className="rounded-md p-1.5 text-neutral-300 transition-colors hover:bg-brand-50 hover:text-brand-600 disabled:opacity-40"
       title="Remove row"
     >
       <Trash2 className="h-4 w-4" />
@@ -233,37 +234,37 @@ export default function QuotationItemsGrid({ items, onAddLine, onChangeLine, onR
   };
 
   const removeBlank = (id) => setBlanks((prev) => (prev.length > 1 ? prev.filter((b) => b !== id) : prev));
-  const lineTotal = (line) => Math.max(0, Number(line.unitPrice || 0) * Number(line.quantity || 0) - Number(line.discount || 0));
+  const lineTotal = (line) => Math.max(0, Number(line.unitPrice || 0) * Number(line.quantity || 0));
 
   return (
     <div>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 sm:overflow-visible">
+      <div className="overflow-x-auto rounded-lg border border-neutral-200 sm:overflow-visible">
         <table className="w-full min-w-160 text-sm">
           <colgroup>
-            <col className="w-[38%]" />
-            <col className="w-[13%]" />
-            <col className="w-[15%]" />
+            <col className="w-[40%]" />
+            <col className="w-[14%]" />
+            <col className="no-print w-[12%]" />
             <col className="w-[14%]" />
             <col className="w-[15%]" />
             <col className="w-[5%]" />
           </colgroup>
-          <thead className="bg-slate-50">
+          <thead className="bg-neutral-50">
             <tr>
               <th className={`${HEAD} text-left`}>Item Name</th>
               <th className={`${HEAD} text-center`}>Qty</th>
+              <th className={`no-print ${HEAD} text-right`}>Cost</th>
               <th className={`${HEAD} text-right`}>Price</th>
-              <th className={`${HEAD} text-right`}>Discount</th>
               <th className={`${HEAD} text-right`}>Total</th>
               <th className="px-2 py-2" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 bg-white">
+          <tbody className="divide-y divide-neutral-100 bg-white">
             {items.map((line) => (
               <tr key={line.itemId}>
                 <td className="px-3 py-2">
-                  <p className="truncate text-sm font-medium text-slate-800">{line.name}</p>
+                  <p className="truncate text-sm font-medium text-neutral-800">{line.name}</p>
                   {(line.itemCode || line.serialNumber) && (
-                    <p className="truncate text-xs text-slate-400">
+                    <p className="truncate text-xs text-neutral-400">
                       {line.itemCode}
                       {line.serialNumber ? ` · SN: ${line.serialNumber}` : ''}
                     </p>
@@ -282,21 +283,13 @@ export default function QuotationItemsGrid({ items, onAddLine, onChangeLine, onR
                     className={`${CELL_INPUT} text-center`}
                   />
                 </td>
+                <td className="no-print px-3 py-2 text-right align-top text-sm tabular-nums text-neutral-500">
+                  <span className="inline-block pt-1.5">{line.costPrice != null ? formatCurrency(line.costPrice) : '—'}</span>
+                </td>
                 <td className="px-1 py-2 align-top">
                   <input type="number" min="0" step="0.01" value={line.unitPrice} onChange={(e) => onChangeLine(line.itemId, 'unitPrice', e.target.value)} className={`${CELL_INPUT} text-right`} />
                 </td>
-                <td className="px-1 py-2 align-top">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={line.discount}
-                    placeholder="0.00"
-                    onChange={(e) => onChangeLine(line.itemId, 'discount', e.target.value)}
-                    className={`${CELL_INPUT} text-right`}
-                  />
-                </td>
-                <td className="px-3 py-2 text-right align-top text-sm font-semibold tabular-nums text-slate-900">
+                <td className="px-3 py-2 text-right align-top text-sm font-semibold tabular-nums text-neutral-900">
                   <span className="inline-block pt-1.5">{formatCurrency(lineTotal(line))}</span>
                 </td>
                 <td className="px-1 py-2 text-center align-top">
@@ -314,10 +307,10 @@ export default function QuotationItemsGrid({ items, onAddLine, onChangeLine, onR
                     }}
                   />
                 </td>
-                <td className="px-2 py-1.5 text-center text-sm text-slate-300">—</td>
-                <td className="px-2 py-1.5 text-right text-sm text-slate-300">—</td>
-                <td className="px-2 py-1.5 text-right text-sm text-slate-300">—</td>
-                <td className="px-3 py-1.5 text-right text-sm text-slate-300">{formatCurrency(0)}</td>
+                <td className="px-2 py-1.5 text-center text-sm text-neutral-300">—</td>
+                <td className="no-print px-3 py-1.5 text-right text-sm text-neutral-300">—</td>
+                <td className="px-2 py-1.5 text-right text-sm text-neutral-300">—</td>
+                <td className="px-3 py-1.5 text-right text-sm text-neutral-300">{formatCurrency(0)}</td>
                 <td className="px-1 py-1.5 text-center">
                   <RemoveButton disabled={blanks.length <= 1} onClick={() => removeBlank(id)} />
                 </td>
@@ -332,26 +325,23 @@ export default function QuotationItemsGrid({ items, onAddLine, onChangeLine, onR
           <button type="button" onClick={addBlankRow} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50">
             <Plus className="h-3.5 w-3.5" /> Add Row
           </button>
-          <p className="px-2 text-xs text-slate-400">Quotation quantities do not reserve stock.</p>
+          <p className="px-2 text-xs text-neutral-400">Quotation quantities do not reserve stock.</p>
         </div>
         <div className="w-64 space-y-1.5 text-sm">
-          <div className="flex justify-between text-slate-500">
+          <div className="flex justify-between text-neutral-500">
             <span>Subtotal</span>
             <span className="tabular-nums">{formatCurrency(subtotal)}</span>
           </div>
-          <div className="flex items-center justify-between gap-3 text-slate-500">
-            <span>Additional discount</span>
-            <input type="number" min="0" step="0.01" value={discount} placeholder="0.00" onChange={(e) => onDiscountChange(e.target.value)} className={`${CELL_INPUT} w-28! text-right`} />
-          </div>
+          <p className="text-xs text-neutral-400">No discount here: it is given on the invoice when the quotation is converted.</p>
           {totalDiscount > 0 && (
             <div className="flex justify-between text-brand-600">
               <span>Total discount</span>
               <span className="tabular-nums">−{formatCurrency(totalDiscount)}</span>
             </div>
           )}
-          <div className="border-t border-slate-200 pt-1.5 text-right">
-            <p className="text-xs uppercase text-slate-400">Grand Total</p>
-            <p className="text-lg font-bold tabular-nums text-slate-900">{formatCurrency(Math.max(0, subtotal - totalDiscount))}</p>
+          <div className="border-t border-neutral-200 pt-1.5 text-right">
+            <p className="text-xs uppercase text-neutral-400">Grand Total</p>
+            <p className="text-lg font-bold tabular-nums text-neutral-900">{formatCurrency(Math.max(0, subtotal - totalDiscount))}</p>
           </div>
         </div>
       </div>

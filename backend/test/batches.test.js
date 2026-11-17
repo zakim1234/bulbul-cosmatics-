@@ -9,10 +9,12 @@ test('FEFO splits a sale across batches and preserves exact COGS', () => {
   assert.equal(allocations.reduce((s, a) => s + a.quantity * a.unitCostCents, 0), 5600);
 });
 test('expired and reserved units are excluded', () => {
-  assert.throws(() => allocateBatches([batch('expired', 100, '2026-01-01', 10), { ...batch('held', 10, null, 10), reservedQuantity: 9 }], 2, now), /Insufficient sellable/);
+  // Only the 1 unreserved, unexpired unit is given; the other is sold ahead
+  // of stock (no batch).
+  assert.deepEqual(allocateBatches([batch('expired', 100, '2026-01-01', 10), { ...batch('held', 10, null, 10), reservedQuantity: 9 }], 2, now).map(a => [a.lot, a.quantity]), [['held', 1]]);
 });
 test('FIFO breaks equal expiry dates and handles missing expiry', () => {
   const lots = [batch('B', 5, null, 10, '2026-09-02'), batch('A', 5, null, 10), batch('C', 5, '2027-01-01', 10)];
   assert.deepEqual(allocateBatches(lots, 12, now).map(a => [a.lot, a.quantity]), [['C', 5], ['A', 5], ['B', 2]]);
 });
-test('zero and exhausted batches cannot supply stock', () => assert.throws(() => allocateBatches([batch('A', 0, null, 10)], 1, now)));
+test('zero and exhausted batches cannot supply stock', () => assert.deepEqual(allocateBatches([batch('A', 0, null, 10)], 1, now), []));

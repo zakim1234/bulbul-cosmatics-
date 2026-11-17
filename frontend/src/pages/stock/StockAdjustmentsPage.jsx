@@ -1,16 +1,20 @@
+import { Link, useNavigate } from 'react-router-dom';
+import { useListKeys } from '../../hooks/useListKeys.js';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDownCircle, ArrowUpCircle, ClipboardCheck, Plus, Search, SlidersHorizontal, Scale, PackageMinus, PackagePlus, X } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ClipboardCheck, FileText, Undo2, Plus, Search, SlidersHorizontal, Scale, PackageMinus, PackagePlus, X, Trash2 } from 'lucide-react';
 import client from '../../api/client.js';
+import { fetchAll } from '../../api/fetchAll.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { hasPermission } from '../../constants/permissions.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/format.js';
 import Button from '../../components/ui/Button.jsx';
 import Badge from '../../components/ui/Badge.jsx';
 import Modal from '../../components/ui/Modal.jsx';
-import Pagination from '../../components/ui/Pagination.jsx';
 import { FormField, Input, Select, Textarea } from '../../components/ui/Field.jsx';
 import { PageSpinner } from '../../components/ui/Spinner.jsx';
 import StockCountModal from './StockCountModal.jsx';
+import PeriodFilter from '../../components/PeriodFilter.jsx';
 
 export const REASONS = {
   DAMAGED: { label: 'Damaged', color: 'red' },
@@ -32,6 +36,28 @@ export default function StockAdjustmentsPage() {
   const { user } = useAuth();
   const toast = useToast();
   const canAdjust = user?.role === 'admin' || user?.role === 'manager';
+  const canDeleteAdj = hasPermission(user, 'deleteStockAdjustments');
+  // A wrong save can be undone (stock put back) and done again.
+  const [undoTarget, setUndoTarget] = useState(null);
+  // Delete: gone from the list for good (undone first if needed, so the stock goes back).
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [undoReason, setUndoReason] = useState('');
+  const [undoing, setUndoing] = useState(false);
+  const undo = async () => {
+    setUndoing(true);
+    try {
+      await client.post(`/stock-adjustments/${encodeURIComponent(undoTarget.number)}/reverse`, { reason: undoReason });
+      toast.success(`${undoTarget.number} undone — the stock is back. You can adjust again now.`);
+      setUndoTarget(null);
+      setUndoReason('');
+      load();
+    } catch (err) {
+      toast.error(err.friendlyMessage || 'Could not undo this adjustment.');
+    } finally {
+      setUndoing(false);
+    }
+  };
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0, limit: 50 });
@@ -42,13 +68,20 @@ export default function StockAdjustmentsPage() {
   const [reason, setReason] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [period, setPeriod] = useState(null); // { type, offset } while a quick period is chosen
+  const onPeriod = ({ period: p, from: f, to: t }) => {
+    setPeriod(p);
+    setFrom(f);
+    setTo(t);
+    setPage(1);
+  };
   const [modalOpen, setModalOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
+  const navigate = useNavigate();
 
   const load = useCallback(() => {
     setLoading(true);
-    client
-      .get('/stock-adjustments', { params: { q: q || undefined, direction: direction || undefined, reason: reason || undefined, from: from || undefined, to: to || undefined, page } })
+    fetchAll('/stock-adjustments', { q: q || undefined, direction: direction || undefined, reason: reason || undefined, from: from || undefined, to: to || undefined, group: 'save' }).then((data) => ({ data }))
       .then((res) => {
         setRows(res.data.data);
         setSummary(res.data.summary);
@@ -69,21 +102,23 @@ export default function StockAdjustmentsPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
+          <h1 className="flex items-center gap-2 text-xl font-bold text-neutral-900">
             <SlidersHorizontal className="h-5 w-5 text-brand-600" /> Stock Adjustment
           </h1>
-          <p className="mt-1 text-sm text-slate-500">Correct stock for damaged, expired or lost goods, or after a physical count.</p>
+          <p className="mt-1 text-sm text-neutral-500">Correct stock for damaged, expired or lost goods, or after a physical count.</p>
         </div>
+        <div className="flex flex-wrap gap-2">
         {canAdjust && (
-          <div className="flex flex-wrap gap-2">
+          <>
             <Button variant="secondary" onClick={() => setCountOpen(true)}>
               <ClipboardCheck className="h-4 w-4" /> Adjust All Items
             </Button>
             <Button onClick={() => setModalOpen(true)}>
               <Plus className="h-4 w-4" /> New Adjustment
             </Button>
-          </div>
+          </>
         )}
+        </div>
       </div>
 
       {summary && (
@@ -100,10 +135,10 @@ export default function StockAdjustmentsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200/70 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200/70 bg-white p-4">
         <FormField label="Search">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             <Input className="pl-9" placeholder="Item or ADJ number" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
           </div>
         </FormField>
@@ -123,81 +158,115 @@ export default function StockAdjustmentsPage() {
           </Select>
         </FormField>
         <FormField label="From">
-          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} />
+          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPeriod(null); setPage(1); }} />
         </FormField>
         <FormField label="To">
-          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} />
+          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPeriod(null); setPage(1); }} />
         </FormField>
+        <div className="w-full border-t border-neutral-100 pt-3">
+          <PeriodFilter period={period} from={from} to={to} onChange={onPeriod} />
+        </div>
       </div>
 
-      <section className="overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-neutral-200/70 bg-white">
         {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-50 text-slate-300 ring-1 ring-slate-100">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-50 text-neutral-300 ring-1 ring-neutral-100">
               <ClipboardCheck className="h-6 w-6" />
             </div>
-            <p className="text-sm text-slate-400">No stock adjustments yet.</p>
+            <p className="text-sm text-neutral-400">No stock adjustments yet.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
+            {/* One line per save: everything adjusted together is one line;
+                open it to see every item in its statement. */}
             <table className="w-full text-sm">
-              <thead className="bg-slate-50/80">
-                <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+              <thead className="bg-neutral-50/80">
+                <tr className="text-left text-xs uppercase tracking-wide text-neutral-400">
                   <th className="px-4 py-3 font-medium">Adjustment</th>
-                  <th className="px-4 py-3 font-medium">Item</th>
-                  <th className="px-4 py-3 text-right font-medium">Change</th>
-                  <th className="px-4 py-3 font-medium">Stock</th>
+                  <th className="px-4 py-3 font-medium">Items</th>
                   <th className="px-4 py-3 font-medium">Reason</th>
-                  <th className="px-4 py-3 text-right font-medium">Value</th>
-                  <th className="px-4 py-3 font-medium">Batches</th>
+                  <th className="px-4 py-3 text-right font-medium">Written off</th>
+                  <th className="px-4 py-3 text-right font-medium">Added back</th>
+                  <th className="px-4 py-3 text-right font-medium">Net</th>
                   <th className="px-4 py-3 font-medium">By</th>
+                  <th className="px-4 py-3 text-right font-medium">Statement</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {rows.map((a) => {
-                  const down = a.direction === 'DECREASE';
+              <tbody className="divide-y divide-neutral-100">
+                {rows.map((s) => {
+                  const to = `/stock-adjustments/statement/${encodeURIComponent(s.number)}`;
+                  const shown = s.itemNames.slice(0, 3);
+                  const more = s.itemNames.length - shown.length;
+                  const gain = s.netLoss < 0;
                   return (
-                    <tr key={a.id} className="align-top hover:bg-slate-50/70">
+                    <tr key={s.number} onClick={() => navigate(to)} className={`cursor-pointer align-top hover:bg-neutral-50/70 ${s.undone ? 'opacity-60' : ''}`}>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{a.adjustmentNumber}</p>
-                        <p className="text-xs text-slate-400">{formatDateTime(a.createdAt)}</p>
-                        {a.countNumber && (
-                          <button type="button" onClick={() => { setQ(a.countNumber); setPage(1); }} className="mt-0.5 text-[11px] font-medium text-brand-600 hover:underline">
-                            Stock count {a.countNumber}
-                          </button>
-                        )}
+                        <p className="font-semibold text-neutral-900">
+                          {s.number}
+                          {s.undone && <span className="ml-1.5 rounded bg-neutral-200 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-neutral-600">Undone</span>}
+                        </p>
+                        <p className="text-xs text-neutral-400">{formatDateTime(s.date)}</p>
+                        {s.note && <p className="mt-0.5 max-w-[220px] text-xs text-neutral-500">{s.note}</p>}
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-800">{a.itemName}</p>
-                        <p className="text-xs text-slate-400">{a.itemCode}</p>
+                        <p className="font-semibold text-neutral-900">
+                          {s.items} item{s.items === 1 ? '' : 's'}
+                        </p>
+                        <p className="max-w-[260px] text-xs text-neutral-500">
+                          {shown.join(', ')}
+                          {more > 0 ? ` +${more} more` : ''}
+                        </p>
                       </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {s.reasons.map((r) => (
+                            <Badge key={r} color={REASONS[r]?.color || 'slate'}>{REASONS[r]?.label || r}</Badge>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-brand-600">{s.writtenOff ? `−${formatCurrency(s.writtenOff)}` : '—'}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-600">{s.addedBack ? `+${formatCurrency(s.addedBack)}` : '—'}</td>
+                      <td className={`whitespace-nowrap px-4 py-3 text-right font-bold tabular-nums ${gain ? 'text-emerald-600' : 'text-neutral-950'}`}>
+                        {gain ? `+${formatCurrency(-s.netLoss)}` : `−${formatCurrency(s.netLoss)}`}
+                      </td>
+                      <td className="px-4 py-3 text-neutral-500">{s.by || '—'}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className={`inline-flex items-center gap-1 font-semibold tabular-nums ${down ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          {down ? <ArrowDownCircle className="h-4 w-4" /> : <ArrowUpCircle className="h-4 w-4" />}
-                          {down ? '−' : '+'}
-                          {a.quantity} {a.unit}
-                        </span>
+                        <div className="flex flex-wrap justify-end gap-1">
+                          <Link
+                            to={to}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                          >
+                            <FileText className="h-3.5 w-3.5" /> Open statement
+                          </Link>
+                          {canAdjust && !s.undone && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setUndoReason('');
+                                setUndoTarget(s);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                            >
+                              <Undo2 className="h-3.5 w-3.5" /> Undo
+                            </button>
+                          )}
+                          {canDeleteAdj && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget(s);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-500">
-                        {a.quantityBefore} → <span className="font-semibold text-slate-800">{a.quantityAfter}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge color={REASONS[a.reason]?.color || 'slate'}>{REASONS[a.reason]?.label || a.reason}</Badge>
-                        {a.note && <p className="mt-1 max-w-[220px] text-xs text-slate-500">{a.note}</p>}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${down ? 'text-rose-600' : 'text-emerald-600'}`}>
-                        {down ? '−' : '+'}
-                        {formatCurrency(a.value)}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">
-                        {a.lots.map((l) => (
-                          <p key={String(l.lot)}>
-                            {l.stockSerial || 'Batch'}
-                            {l.expiryDate ? ` · exp ${formatDate(l.expiryDate)}` : ''} ({l.quantity > 0 ? '+' : ''}{l.quantity})
-                          </p>
-                        ))}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{a.createdByName || '—'}</td>
                     </tr>
                   );
                 })}
@@ -207,7 +276,63 @@ export default function StockAdjustmentsPage() {
         )}
       </section>
 
-      <Pagination {...pagination} onChange={setPage} />
+
+      <Modal open={!!deleteTarget} onClose={deleting ? undefined : () => setDeleteTarget(null)} title={`Delete ${deleteTarget?.number || ''}`} size="sm">
+        {deleteTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-neutral-600">
+              {deleteTarget.undone
+                ? 'It is already undone, so the stock does not change. It is removed from the list for good.'
+                : 'The stock goes back to what it was before this adjustment, then it is removed from the list for good.'}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>Keep it</Button>
+              <Button
+                variant="danger"
+                loading={deleting}
+                onClick={async () => {
+                  setDeleting(true);
+                  try {
+                    await client.delete(`/stock-adjustments/${encodeURIComponent(deleteTarget.number)}`);
+                    toast.success(`${deleteTarget.number} deleted.`);
+                    setDeleteTarget(null);
+                    load();
+                  } catch (err) {
+                    toast.error(err.friendlyMessage || 'Could not delete this adjustment.');
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                <Trash2 className="h-4 w-4" /> Delete
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!undoTarget} onClose={undoing ? undefined : () => setUndoTarget(null)} title={`Undo ${undoTarget?.number || ''}`} size="sm">
+        {undoTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-neutral-600">
+              The stock of {undoTarget.items === 1 ? 'this item' : `these ${undoTarget.items} items`} goes back to what it was before this adjustment
+              {undoTarget.itemNames.length ? ` (${undoTarget.itemNames.slice(0, 4).join(', ')}${undoTarget.itemNames.length > 4 ? ', …' : ''})` : ''}. It stays on the list marked
+              Undone and no longer counts in Profit &amp; Loss. Then you can adjust again.
+            </p>
+            <FormField label="Reason (optional)">
+              <Textarea rows={2} maxLength={500} value={undoReason} onChange={(e) => setUndoReason(e.target.value)} placeholder="e.g. counted wrong" />
+            </FormField>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setUndoTarget(null)} disabled={undoing}>
+                Keep it
+              </Button>
+              <Button loading={undoing} onClick={undo}>
+                <Undo2 className="h-4 w-4" /> Undo adjustment
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <StockCountModal
         open={countOpen}
@@ -242,6 +367,7 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
   const [counted, setCounted] = useState('');
   const [reason, setReason] = useState('DAMAGED');
   const [lotId, setLotId] = useState('');
+  const kb = useListKeys();
   const [expiryDate, setExpiryDate] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -353,7 +479,7 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
         {/* Item */}
         <FormField label="Item" required>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
             <Input
               className="pl-9 pr-9"
               placeholder="Search item by name or code"
@@ -364,27 +490,28 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
                 setLotId('');
               }}
               autoFocus
+              onKeyDown={kb.onKeyDown}
             />
             {query && (
               <button
                 type="button"
                 onClick={() => { setQuery(''); setInfo(null); setMatches([]); setLotId(''); }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-neutral-400 hover:text-neutral-600"
                 aria-label="Clear item"
               >
                 <X className="h-4 w-4" />
               </button>
             )}
             {matches.length > 0 && !info && (
-              <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+              <ul ref={kb.listRef} className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-xl border border-neutral-200/80 bg-white py-1 shadow-lg">
                 {matches.map((m) => (
                   <li key={m.id}>
                     <button type="button" onClick={() => pick(m)} className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-brand-50">
                       <span>
-                        <span className="font-medium text-slate-800">{m.name}</span>
-                        <span className="ml-2 text-xs text-slate-400">{m.itemCode}</span>
+                        <span className="font-medium text-neutral-800">{m.name}</span>
+                        <span className="ml-2 text-xs text-neutral-400">{m.itemCode}</span>
                       </span>
-                      <span className="text-xs text-slate-500">{m.quantity} {m.unit}</span>
+                      <span className="text-xs text-neutral-500">{m.quantity} {m.unit}</span>
                     </button>
                   </li>
                 ))}
@@ -395,18 +522,18 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
 
         {item && (
           <>
-            <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-3 text-center">
+            <div className="grid grid-cols-3 gap-2 rounded-xl bg-neutral-50 p-3 text-center">
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">In stock</p>
-                <p className="text-base font-bold text-slate-800">{item.quantity} {item.unit}</p>
+                <p className="text-[11px] uppercase tracking-wide text-neutral-400">In stock</p>
+                <p className="text-base font-bold text-neutral-800">{item.quantity} {item.unit}</p>
               </div>
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Held by pending invoices</p>
-                <p className="text-base font-bold text-slate-800">{item.reservedQuantity}</p>
+                <p className="text-[11px] uppercase tracking-wide text-neutral-400">Held by pending invoices</p>
+                <p className="text-base font-bold text-neutral-800">{item.reservedQuantity}</p>
               </div>
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-slate-400">Average cost</p>
-                <p className="text-base font-bold text-slate-800">{formatCurrency(item.unitCost)}</p>
+                <p className="text-[11px] uppercase tracking-wide text-neutral-400">Average cost</p>
+                <p className="text-base font-bold text-neutral-800">{formatCurrency(item.unitCost)}</p>
               </div>
             </div>
 
@@ -422,13 +549,13 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
                     setLotId('');
                   }}
                   className={`rounded-xl border p-3 text-left transition ${
-                    mode === key ? 'border-brand-300 bg-brand-50 ring-1 ring-brand-200' : 'border-slate-200 hover:border-slate-300'
+                    mode === key ? 'border-brand-300 bg-brand-50 ring-1 ring-brand-200' : 'border-neutral-200 hover:border-neutral-300'
                   }`}
                 >
-                  <p className={`flex items-center gap-1.5 text-sm font-semibold ${mode === key ? 'text-brand-700' : 'text-slate-700'}`}>
+                  <p className={`flex items-center gap-1.5 text-sm font-semibold ${mode === key ? 'text-brand-700' : 'text-neutral-700'}`}>
                     <Icon className="h-4 w-4" /> {label}
                   </p>
-                  <p className="mt-0.5 text-xs text-slate-400">{hint}</p>
+                  <p className="mt-0.5 text-xs text-neutral-400">{hint}</p>
                 </button>
               ))}
             </div>
@@ -484,12 +611,12 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
             </FormField>
 
             {qty > 0 && !problem && (
-              <div className={`rounded-xl p-3 text-sm ${direction === 'DECREASE' ? 'bg-rose-50 text-rose-800' : 'bg-emerald-50 text-emerald-800'}`}>
+              <div className={`rounded-xl p-3 text-sm ${direction === 'DECREASE' ? 'bg-brand-50 text-brand-800' : 'bg-emerald-50 text-emerald-800'}`}>
                 Stock will go from <strong>{item.quantity}</strong> to <strong>{after} {item.unit}</strong> —{' '}
                 {direction === 'DECREASE' ? `${formatCurrency(value)} written off` : `${formatCurrency(value)} added back`} at average cost.
               </div>
             )}
-            {problem && <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{problem}</div>}
+            {problem && <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800">{problem}</div>}
           </>
         )}
       </div>
@@ -498,22 +625,22 @@ function NewAdjustmentModal({ open, onClose, onSaved }) {
 }
 
 const TONES = {
-  rose: 'from-red-500 to-red-700',
-  emerald: 'from-neutral-700 to-neutral-950',
-  amber: 'from-neutral-400 to-neutral-600',
-  indigo: 'from-red-500 to-red-700',
+  rose: 'from-primary to-navy text-white',
+  emerald: 'from-brand-400 to-brand-500 text-neutral-950',
+  amber: 'from-brand-100 to-brand-300 text-brand-800',
+  indigo: 'from-primary to-navy text-white',
 };
 
 function SummaryCard({ icon: Icon, tone, label, value, hint }) {
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-slate-200/70 bg-white p-5 shadow-sm">
-      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${TONES[tone]} text-white shadow-md`}>
+    <div className="flex items-center gap-4 rounded-2xl border border-neutral-200/70 bg-white p-5">
+      <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${TONES[tone]} shadow-md`}>
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0">
-        <p className="text-sm font-medium text-slate-500">{label}</p>
-        <p className="text-2xl font-bold leading-tight tabular-nums text-slate-900">{value}</p>
-        <p className="truncate text-xs text-slate-400">{hint}</p>
+        <p className="text-sm font-medium text-neutral-500">{label}</p>
+        <p className="text-2xl font-bold leading-tight text-neutral-900 figure">{value}</p>
+        <p className="truncate text-xs text-neutral-400">{hint}</p>
       </div>
     </div>
   );

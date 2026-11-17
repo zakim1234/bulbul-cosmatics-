@@ -24,6 +24,7 @@ const accountTransactionSchema = new mongoose.Schema(
         'EXPENSE',
         'PARTNER_CONTRIBUTION',
         'PARTNER_WITHDRAWAL',
+        'CUSTOMER_LOAN',
       ],
       required: true,
     },
@@ -36,6 +37,15 @@ const accountTransactionSchema = new mongoose.Schema(
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     postedAt: { type: Date, default: null },
     reversedAt: { type: Date, default: null },
+    // A customer payment put on the wrong account and moved to the right one
+    // (Account statement → Move): where it went.
+    movedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+    movedToName: { type: String, default: '' },
+    // A mistake on this receipt corrected later by someone else (wrong
+    // customer, wrong account): what was done and by whom -- the person who
+    // took the money sees it was put right.
+    correctionNote: { type: String, default: '' },
+    correctedByName: { type: String, default: '' },
   },
   { timestamps: true }
 );

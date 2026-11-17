@@ -4,7 +4,9 @@
 export function printPage(size = 'A5', margin = '8mm') {
   const style = document.createElement('style');
   style.id = 'dynamic-print-style';
-  style.textContent = `@page { size: ${size}; margin: ${margin}; }`;
+  // Top/bottom page margin 0: the browser then has no room to print the page
+  // link and date; the same space is padding on the content instead.
+  style.textContent = `@page { size: ${size}; margin: 0 ${margin}; } body { padding: ${margin} 0 !important; }`;
   document.head.appendChild(style);
 
   const cleanup = () => {

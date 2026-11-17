@@ -14,6 +14,29 @@ import { generatePurchasePaymentNumber } from '../controllers/purchaseController
 export const OUTSTANDING = { status: 'completed', balanceCents: { $gt: 0 } };
 export const OLDEST_FIRST = { purchaseDate: 1, createdAt: 1, _id: 1 };
 
+// What each supplier is owed, net: their invoices' balances less any credit
+// they hold (a minus opening balance -- money we had paid them ahead). A
+// supplier with -128 credit and a $100 invoice is owed nothing (we are still
+// 28 ahead), so only suppliers owed something come out.
+export const NET_OWED = [
+  { $match: { status: 'completed', balanceCents: { $ne: 0 } } },
+  {
+    $group: {
+      _id: '$supplier',
+      name: { $first: '$supplierName' },
+      owedCents: { $sum: '$balanceCents' },
+      invoiceCount: { $sum: { $cond: [{ $gt: ['$balanceCents', 0] }, 1, 0] } },
+    },
+  },
+  { $match: { owedCents: { $gt: 0 } } },
+];
+
+// The credit a supplier holds with us (cents, 0 or more).
+async function creditCents(supplierId, session) {
+  const [row] = await Purchase.aggregate([{ $match: { supplier: supplierId, status: 'completed', balanceCents: { $lt: 0 } } }, { $group: { _id: null, c: { $sum: '$balanceCents' } } }]).session(session);
+  return -(row?.c || 0);
+}
+
 async function generateBulkNumber(session) {
   const seq = await nextSequence('bulkPurchasePayment', session);
   return `BPAY-${new Date().getFullYear()}-${String(seq).padStart(6, '0')}`;
@@ -24,11 +47,13 @@ async function generateBulkNumber(session) {
 // invoice of theirs when omitted. One account transaction, one
 // PurchasePayment per invoice reached, one BulkPurchasePayment receipt.
 // Runs inside the caller's transaction; returns the receipt document.
-export async function paySupplier(session, { supplierId, purchaseIds = null, amountCents, paymentAccountId, paymentDate, note = '', percentage = null, receiptNo = '', user }) {
+export async function paySupplier(session, { supplierId, purchaseIds = null, amountCents, discountCents = 0, paymentAccountId, paymentDate, note = '', percentage = null, receiptNo = '', user, offsetLabel = '' }) {
   const supplier = await Supplier.findById(supplierId).session(session);
   if (!supplier) throw new ApiError(404, 'Supplier not found.');
-  const account = await Account.findById(paymentAccountId).session(session);
-  if (!account || !account.isActive) throw new ApiError(400, 'Selected payment account is not available.');
+  // An offset (set off against what they owe us as a customer) moves no
+  // money: no account, no account transaction.
+  const account = offsetLabel ? null : await Account.findById(paymentAccountId).session(session);
+  if (!offsetLabel && (!account || !account.isActive)) throw new ApiError(400, 'Selected payment account is not available.');
 
   let purchases;
   if (purchaseIds) {
@@ -45,12 +70,21 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
     if (p.balanceCents <= 0) throw new ApiError(409, `${p.purchaseNumber} is already fully paid.`);
   }
   const selectedOwedCents = purchases.reduce((s, p) => s + p.balanceCents, 0);
-  if (amountCents > selectedOwedCents) {
-    throw new ApiError(400, `Amount exceeds what the selected invoices owe (${fromCents(selectedOwedCents).toFixed(2)}).`);
+  if (amountCents + discountCents > selectedOwedCents) {
+    throw new ApiError(400, discountCents ? `Amount plus discount exceeds what the selected invoices owe (${fromCents(selectedOwedCents).toFixed(2)}).` : `Amount exceeds what the selected invoices owe (${fromCents(selectedOwedCents).toFixed(2)}).`);
+  }
+  // Credit the supplier holds (money paid ahead) counts against what we owe.
+  const credit = await creditCents(supplier._id, session);
+  if (credit > 0) {
+    const allOwed = (await Purchase.find({ supplier: supplier._id, ...OUTSTANDING }).select('balanceCents').session(session)).reduce((s, p) => s + p.balanceCents, 0);
+    const netCents = allOwed - credit;
+    if (amountCents + discountCents > netCents) {
+      throw new ApiError(400, netCents > 0 ? `${supplier.name} holds ${fromCents(credit).toFixed(2)} credit, so only ${fromCents(netCents).toFixed(2)} is owed to them.` : `${supplier.name} holds ${fromCents(credit).toFixed(2)} credit, so nothing is owed to them (they owe us ${fromCents(-netCents).toFixed(2)}).`);
+    }
   }
 
   const bulkNumber = await generateBulkNumber(session);
-  const txn = await postImmediateTransaction(
+  const txn = offsetLabel ? null : await postImmediateTransaction(
     {
       account,
       direction: 'OUT',
@@ -71,10 +105,11 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
         supplier: supplier._id,
         supplierName: supplier.name,
         amountCents,
+        discountCents,
         selectedOwedCents,
         percentage,
-        paymentAccount: account._id,
-        paymentAccountName: account.name,
+        paymentAccount: account?._id || null,
+        paymentAccountName: account?.name || offsetLabel,
         accountTransaction: txn?._id || null,
         paymentDate,
         note: String(note).trim(),
@@ -94,7 +129,7 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
     const previousBalanceCents = purchase.balanceCents;
     purchase.paidAmountCents += take;
     purchase.balanceCents -= take;
-    purchase.paymentAccount = account._id;
+    if (account) purchase.paymentAccount = account._id;
     await purchase.save({ session });
 
     const [payment] = await PurchasePayment.create(
@@ -103,8 +138,8 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
           paymentNumber: await generatePurchasePaymentNumber(session),
           purchase: purchase._id,
           amountCents: take,
-          paymentAccount: account._id,
-          paymentAccountName: account.name,
+          paymentAccount: account?._id || null,
+          paymentAccountName: account?.name || offsetLabel,
           accountTransaction: txn?._id || null,
           previousBalanceCents,
           newBalanceCents: purchase.balanceCents,
@@ -127,6 +162,42 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
     });
     remaining -= take;
   }
+
+  // The supplier's discount: clears the rest of the invoices the same way,
+  // oldest first, but no money moves (Discount Received on the P&L).
+  let discountLeft = discountCents;
+  for (const purchase of purchases) {
+    if (discountLeft <= 0) break;
+    if (purchase.balanceCents <= 0) continue;
+    const take = Math.min(discountLeft, purchase.balanceCents);
+    const previousBalanceCents = purchase.balanceCents;
+    purchase.paidAmountCents += take;
+    purchase.balanceCents -= take;
+    await purchase.save({ session });
+    const [payment] = await PurchasePayment.create(
+      [
+        {
+          paymentNumber: await generatePurchasePaymentNumber(session),
+          purchase: purchase._id,
+          amountCents: take,
+          paymentAccount: null,
+          paymentAccountName: 'Supplier discount',
+          accountTransaction: null,
+          previousBalanceCents,
+          newBalanceCents: purchase.balanceCents,
+          note: `Discount on bulk payment ${bulkNumber}${bulk.note ? ` — ${bulk.note}` : ''}`,
+          paymentDate,
+          receiptNo: bulk.receiptNo,
+          bulkPayment: bulk._id,
+          discount: true,
+          createdBy: user?._id,
+        },
+      ],
+      { session }
+    );
+    bulk.allocations.push({ purchase: purchase._id, purchaseNumber: purchase.purchaseNumber, payment: payment._id, amountCents: take, previousBalanceCents, newBalanceCents: purchase.balanceCents, discount: true });
+    discountLeft -= take;
+  }
   await bulk.save({ session });
   return bulk;
 }
@@ -138,9 +209,10 @@ export async function paySupplier(session, { supplierId, purchaseIds = null, amo
 export async function reversePayment(session, payment, { reason = '', user, purchase = null }) {
   if (payment.status !== 'POSTED') return null;
   const invoice = purchase || (await Purchase.findById(payment.purchase).session(session));
-  const account = await Account.findById(payment.paymentAccount).session(session);
-  if (!account) throw new ApiError(409, `The account payment ${payment.paymentNumber} was made from no longer exists. Contact an administrator.`);
-  await postImmediateTransaction(
+  // An offset payment moved no money, so there is nothing to give back.
+  const account = payment.paymentAccount ? await Account.findById(payment.paymentAccount).session(session) : null;
+  if (payment.paymentAccount && !account) throw new ApiError(409, `The account payment ${payment.paymentNumber} was made from no longer exists. Contact an administrator.`);
+  if (account) await postImmediateTransaction(
     {
       account,
       direction: 'IN',

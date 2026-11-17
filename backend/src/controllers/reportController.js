@@ -3,6 +3,7 @@ import Purchase from '../models/Purchase.js';
 import InventoryItem from '../models/InventoryItem.js';
 import Customer from '../models/Customer.js';
 import User from '../models/User.js';
+import Branch from '../models/Branch.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { fromCents } from '../utils/money.js';
 import { resolveDateRange } from '../utils/dateRange.js';
@@ -354,7 +355,8 @@ export const customersReport = asyncHandler(async (req, res) => {
 // GET /api/reports/purchases
 export const purchasesReport = asyncHandler(async (req, res) => {
   const { start, end } = resolveDateRange(req.query);
-  const match = { status: 'completed', createdAt: { $gte: start, $lte: end } };
+  // Opening balances are old debts, not goods bought in this period.
+  const match = { status: 'completed', isOpeningBalance: { $ne: true }, createdAt: { $gte: start, $lte: end } };
 
   const [[agg], bySupplier, byProduct, mostPurchased, supplierCount] = await Promise.all([
     Purchase.aggregate([
@@ -408,8 +410,20 @@ export const purchasesReport = asyncHandler(async (req, res) => {
 // endpoint, since any reports-permitted role should be able to run this
 // report without needing full Users administration access.
 export const listReportableUsers = asyncHandler(async (req, res) => {
-  const users = await User.find({ active: true }).sort({ name: 1 }).select('name username role');
-  res.json({ success: true, data: users.map((u) => ({ id: u._id, name: u.name, username: u.username, role: u.role })) });
+  const users = await User.find({ active: true }).sort({ name: 1 }).select('name username role isSuperAdmin branch');
+  // With each person's branch, so pickers can say who works where.
+  const branchName = new Map((await Branch.find().select('name').lean()).map((b) => [String(b._id), b.name]));
+  res.json({
+    success: true,
+    data: users.map((u) => ({
+      id: u._id,
+      name: u.name,
+      username: u.username,
+      role: u.role,
+      isSuperAdmin: !!u.isSuperAdmin,
+      branchName: u.isSuperAdmin ? '' : branchName.get(String(u.branch)) || '',
+    })),
+  });
 });
 
 // GET /api/reports/user-performance -- per-cashier/user performance for a

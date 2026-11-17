@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import { connectDB } from '../config/db.js';
 import User from '../models/User.js';
+import { normalizeEmail } from './email.js';
 
 const WEAK_PASSWORDS = new Set(['admin', '123456', 'password', 'admin123', 'changeme', 'letmein']);
 const MIN_PASSWORD_LENGTH = 12;
@@ -26,7 +27,11 @@ function validateEnv() {
 async function seedAdmin() {
   validateEnv();
 
-  const username = (process.env.SEED_ADMIN_USERNAME || 'admin').trim().toLowerCase();
+  // The first admin signs in with SEED_ADMIN_EMAIL (SEED_ADMIN_USERNAME still
+  // works for older setups).
+  const username = process.env.SEED_ADMIN_EMAIL
+    ? normalizeEmail(process.env.SEED_ADMIN_EMAIL)
+    : (process.env.SEED_ADMIN_USERNAME || 'admin').trim().toLowerCase();
   const name = process.env.SEED_ADMIN_NAME || 'System Administrator';
 
   await connectDB();

@@ -1,72 +1,138 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Roboto', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Roboto', ui-sans-serif, system-ui, sans-serif;
 
-  /* Bulbul Cosmetics brand: berry rose. Used as bg-brand-600, text-brand-700, ... */
-  --color-brand-50: #fdf2f7;
-  --color-brand-100: #fce7f1;
-  --color-brand-200: #fbcfe4;
-  --color-brand-300: #f7a6c9;
-  --color-brand-400: #ef72a6;
-  --color-brand-500: #e04889;
-  --color-brand-600: #c9296d;
-  --color-brand-700: #a81d58;
-  --color-brand-800: #8b1b4b;
-  --color-brand-900: #5a1446;
-  --color-brand-950: #3b0a2c;
+  /* The design system is two colors: green #3FAC64 (brand-500 / primary)
+     and slate #98A2B3 (neutral-400). Everything else is a shade of one of
+     them. Brand 600+ are darker greens for text on white. */
+  --color-brand-50: #effaf3;
+  --color-brand-100: #d8f3e1;
+  --color-brand-200: #b3e6c4;
+  --color-brand-300: #82d29e;
+  --color-brand-400: #5bbf7e;
+  --color-brand-500: #3fac64;
+  --color-brand-600: #33914f;
+  --color-brand-700: #2a7641;
+  --color-brand-800: #245e37;
+  --color-brand-900: #1f4d2f;
+  --color-brand-950: #0f2a19;
 
-  /* Champagne gold accent. */
-  --color-gold-100: #fbf1db;
-  --color-gold-200: #f6e2b3;
-  --color-gold-300: #ecc983;
-  --color-gold-400: #d9ab5b;
-  --color-gold-500: #c39243;
-  --color-gold-600: #a07432;
+  /* Solid fills (buttons, active tabs, icon chips) with white text. Not
+     flipped in dark mode, so the white text always stays readable. */
+  --color-primary: #3fac64;
+  --color-primary-hover: #33914f;
+  --color-navy: #2a7641;
 
-  /* The old red accent follows the brand. */
-  --color-red-50: #fdf2f7;
-  --color-red-100: #fce7f1;
-  --color-red-200: #fbcfe4;
-  --color-red-300: #f7a6c9;
-  --color-red-400: #ef72a6;
-  --color-red-500: #e04889;
-  --color-red-600: #c9296d;
-  --color-red-700: #a81d58;
-  --color-red-800: #8b1b4b;
-  --color-red-900: #5a1446;
-  --color-red-950: #3b0a2c;
+  /* "Good" (paid, profit, success) is the same green. */
+  --color-emerald-50: #effaf3;
+  --color-emerald-100: #d8f3e1;
+  --color-emerald-200: #b3e6c4;
+  --color-emerald-300: #82d29e;
+  --color-emerald-400: #5bbf7e;
+  --color-emerald-500: #3fac64;
+  --color-emerald-600: #33914f;
+  --color-emerald-700: #2a7641;
+  --color-emerald-800: #245e37;
+  --color-emerald-900: #1f4d2f;
 
-  /* Warm mauve greys instead of cold blue-grey. */
-  --color-slate-50: #faf7f8;
-  --color-slate-100: #f4eef1;
-  --color-slate-200: #eae0e5;
-  --color-slate-300: #d8c8d0;
-  --color-slate-400: #ad98a4;
-  --color-slate-500: #85707d;
-  --color-slate-600: #67545f;
-  --color-slate-700: #4f3f49;
-  --color-slate-800: #382a33;
-  --color-slate-900: #271b24;
-  --color-slate-950: #170f15;
-
-  /* Neutral leans plum, so the dark bands on documents read as deep plum. */
-  --color-neutral-50: #fbf7f9;
-  --color-neutral-100: #f4ecf0;
-  --color-neutral-200: #e8d9e0;
-  --color-neutral-300: #d1bbc7;
-  --color-neutral-400: #a88c9b;
-  --color-neutral-500: #7f6474;
-  --color-neutral-600: #614859;
-  --color-neutral-700: #4b3345;
-  --color-neutral-800: #3b2236;
-  --color-neutral-900: #2e1329;
-  --color-neutral-950: #24091f;
+  /* Slate greys built around #98A2B3 (400). */
+  --color-neutral-50: #f9fafb;
+  --color-neutral-100: #f2f4f7;
+  --color-neutral-200: #eaecf0;
+  --color-neutral-300: #d0d5dd;
+  --color-neutral-400: #98a2b3;
+  --color-neutral-500: #667085;
+  --color-neutral-600: #475467;
+  --color-neutral-700: #344054;
+  --color-neutral-800: #1d2939;
+  --color-neutral-900: #101828;
+  --color-neutral-950: #0c111d;
 }
 
 :root {
   color-scheme: light;
+}
+
+/* Dark mode (html.dark, toggled in the top bar). Screen only -- printed
+   documents always stay black on white. The neutral scale is flipped, so
+   "light background / dark text" markup becomes "dark background / light
+   text" without touching the pages; white surfaces become dark cards. */
+@media screen {
+  html.dark {
+    color-scheme: dark;
+    --color-neutral-50: #1a1f2a;
+    --color-neutral-100: #212734;
+    --color-neutral-200: #2c3341;
+    --color-neutral-300: #3b4352;
+    --color-neutral-400: #7d8798;
+    --color-neutral-500: #98a2b3;
+    --color-neutral-600: #b4bcc8;
+    --color-neutral-700: #ccd2db;
+    --color-neutral-800: #e0e4ea;
+    --color-neutral-900: #eef0f4;
+    --color-neutral-950: #f7f8fa;
+
+    --color-brand-50: #13261b;
+    --color-brand-100: #173022;
+    --color-brand-200: #1e3f2c;
+    --color-brand-300: #27543a;
+    --color-brand-400: #2f7a4a;
+    --color-brand-500: #4fbf76;
+    --color-brand-600: #6fd08f;
+    --color-brand-700: #8fdcaa;
+    --color-brand-800: #b3e8c5;
+    --color-brand-900: #d6f3e0;
+    --color-brand-950: #ecfaf1;
+
+    --color-emerald-50: #13261b;
+    --color-emerald-100: #173022;
+    --color-emerald-200: #1e3f2c;
+    --color-emerald-400: #6fd08f;
+    --color-emerald-500: #4fbf76;
+    --color-emerald-600: #3fac64;
+    --color-emerald-700: #8fdcaa;
+    --color-emerald-800: #b3e8c5;
+  }
+  html.dark body,
+  html.dark [class*="bg-[#f4f6f8]"] {
+    background-color: #12161e;
+  }
+  html.dark .bg-white,
+  html.dark [class*="hover:bg-white"]:hover {
+    background-color: #181d27;
+  }
+  html.dark [class*=" bg-white/"],
+  html.dark [class^="bg-white/"] {
+    background-color: rgb(24 29 39 / 0.85);
+  }
+  html.dark .ring-black\/5 {
+    --tw-ring-color: rgb(255 255 255 / 0.06);
+  }
+  /* Overlays stay dark, not flipped to light. */
+  html.dark [class*="bg-neutral-900/"],
+  html.dark [class*="bg-neutral-950/"],
+  html.dark [class*="bg-brand-900/"] {
+    background-color: rgb(3 6 14 / 0.6);
+  }
+  /* Charts: soft grid lines and axis text on the dark card. */
+  html.dark .recharts-cartesian-grid line {
+    stroke: #2c3341;
+  }
+  html.dark .recharts-cartesian-axis-tick text {
+    fill: #7d8798;
+  }
+  html.dark .recharts-tooltip-cursor {
+    fill: rgb(255 255 255 / 0.04);
+  }
+  html.dark ::-webkit-scrollbar-thumb {
+    background: #3b4352;
+  }
+  /* The navy logo would vanish on the dark background: a soft light glow behind it. */
+  html.dark img[src*="logo-mark"] {
+    filter: drop-shadow(0 0 5px rgb(255 255 255 / 0.55));
+  }
 }
 
 html, body, #root {
@@ -74,37 +140,27 @@ html, body, #root {
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
-  font-family: 'Poppins', ui-sans-serif, system-ui, sans-serif;
-  background-image:
-    radial-gradient(60rem 30rem at 100% -10%, rgb(252 231 241 / 0.7), transparent 60%),
-    radial-gradient(40rem 24rem at -10% 110%, rgb(251 241 219 / 0.5), transparent 60%);
-  background-attachment: fixed;
-}
-
-h1, h2, .font-display {
-  font-family: var(--font-display);
-  letter-spacing: -0.01em;
+  @apply bg-[#f4f6f8] text-neutral-900 antialiased;
+  font-family: 'Roboto', ui-sans-serif, system-ui, sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* The deep plum used by the sidebar, hero banners and the login panel. */
-.bg-bulbul {
-  background-color: #3b0a2c;
-  background-image:
-    radial-gradient(28rem 20rem at 110% 0%, rgb(224 72 137 / 0.35), transparent 60%),
-    radial-gradient(22rem 18rem at -20% 100%, rgb(217 171 91 / 0.22), transparent 60%),
-    linear-gradient(160deg, #4a0f39 0%, #2c0722 100%);
+/* Headings everywhere use the display face. */
+h1, h2, h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
 }
 
-.text-gold-shine {
-  background: linear-gradient(100deg, #f6e2b3 0%, #d9ab5b 45%, #f6e2b3 70%, #c39243 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.eyebrow {
+  @apply text-[10.5px] font-semibold uppercase tracking-[0.16em] text-neutral-500;
+}
+.figure {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
 }
 
 /* Plain manual-entry numeric inputs (Seller/POS quantity, etc.) -- no
@@ -126,11 +182,11 @@ h1, h2, .font-display {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #e0c9d5;
+  background: #d0d5dd;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #c9296d;
+  background: #98a2b3;
 }
 
 /* Print styles: receipts and reports render on a plain white page with the
@@ -139,9 +195,6 @@ h1, h2, .font-display {
    chart, or table row never splits awkwardly across pages, and table
    headers repeat on every printed page. */
 @media print {
-  body {
-    background: #fff;
-  }
   body * {
     visibility: hidden;
   }
@@ -156,6 +209,37 @@ h1, h2, .font-display {
   }
   .no-print {
     display: none !important;
+  }
+  /* The app scrolls inside <main>; on paper everything must flow onto as many
+     pages as it needs, and wide tables shrink to the page width. */
+  html, body, #root, #root *:not(.truncate) {
+    overflow: visible !important;
+  }
+  #root > div, main {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+  #print-area table {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  #print-area button,
+  #print-area select,
+  .chat-widget {
+    display: none !important;
+  }
+  #print-area section,
+  #print-area .rounded-2xl {
+    break-inside: avoid-page;
+  }
+  /* Top/bottom margin 0: the browser has no room to print the page link
+     and date at the top and bottom of each page. */
+  @page {
+    size: A4 landscape;
+    margin: 0 10mm;
+  }
+  body {
+    padding: 10mm 0;
   }
 
   .report-section,
@@ -173,4 +257,202 @@ h1, h2, .font-display {
   table tr {
     break-inside: avoid;
   }
+}
+
+/* The soft surface (slate easing into green)
+   that replaces every black panel: sidebar, top bar, hero cards, totals
+   boxes. Text written for a dark background (white, light greys, light
+   brand) is turned dark inside it, so pages keep their markup. Unlayered on
+   purpose: it wins over utilities. */
+.surface-blue {
+  background-color: #eef1f4;
+  background-image: linear-gradient(135deg, #f2f4f7 0%, #e6eaef 40%, #dcf2e4 80%, #c9ebd5 100%);
+  color: #101828;
+}
+.surface-blue [class~="text-white"],
+.surface-blue [class*=" text-white/"],
+.surface-blue [class^="text-white/"],
+.surface-blue [class~="text-neutral-100"],
+.surface-blue [class~="text-neutral-200"],
+.surface-blue [class*="hover:text-white"]:hover,
+.surface-blue [class*="hover:text-neutral-100"]:hover {
+  color: #101828;
+}
+.surface-blue [class~="text-neutral-300"],
+.surface-blue [class~="text-neutral-400"] {
+  color: #475467;
+}
+.surface-blue [class~="text-neutral-500"],
+.surface-blue [class~="text-neutral-600"],
+.surface-blue [class~="text-neutral-700"] {
+  color: #667085;
+}
+.surface-blue [class~="text-brand-300"],
+.surface-blue [class~="text-brand-400"],
+.surface-blue [class~="text-brand-500"] {
+  color: #2a7641;
+}
+.surface-blue [class~="text-emerald-300"],
+.surface-blue [class~="text-emerald-400"] {
+  color: #245e37;
+}
+.surface-blue [class*=" bg-white/"],
+.surface-blue [class^="bg-white/"] {
+  background-color: rgb(255 255 255 / 0.45);
+}
+.surface-blue [class*="hover:bg-white/"]:hover {
+  background-color: rgb(255 255 255 / 0.7);
+}
+.surface-blue [class*="border-white/"],
+.surface-blue [class*="ring-white/"] {
+  border-color: rgb(10 10 10 / 0.1);
+  --tw-ring-color: rgb(10 10 10 / 0.08);
+}
+
+/* Dark mode: the same surface as dark slate with a hint of green, and
+   its text turned light again. */
+@media screen {
+  html.dark .surface-blue {
+    background-color: #1d2430;
+    background-image: linear-gradient(135deg, #222936 0%, #1d2430 45%, #18301f 85%, #1a3a26 100%);
+    color: #eef0f4;
+  }
+  html.dark .surface-blue [class~="text-white"],
+  html.dark .surface-blue [class*=" text-white/"],
+  html.dark .surface-blue [class^="text-white/"],
+  html.dark .surface-blue [class~="text-neutral-100"],
+  html.dark .surface-blue [class~="text-neutral-200"],
+  html.dark .surface-blue [class*="hover:text-white"]:hover,
+  html.dark .surface-blue [class*="hover:text-neutral-100"]:hover {
+    color: #eef0f4;
+  }
+  html.dark .surface-blue [class~="text-neutral-300"],
+  html.dark .surface-blue [class~="text-neutral-400"] {
+    color: #b4bcc8;
+  }
+  html.dark .surface-blue [class~="text-neutral-500"],
+  html.dark .surface-blue [class~="text-neutral-600"],
+  html.dark .surface-blue [class~="text-neutral-700"] {
+    color: #98a2b3;
+  }
+  html.dark .surface-blue [class~="text-brand-300"],
+  html.dark .surface-blue [class~="text-brand-400"],
+  html.dark .surface-blue [class~="text-brand-500"] {
+    color: #6fd08f;
+  }
+  html.dark .surface-blue [class~="text-emerald-300"],
+  html.dark .surface-blue [class~="text-emerald-400"] {
+    color: #8fdcaa;
+  }
+  html.dark .surface-blue [class*=" bg-white/"],
+  html.dark .surface-blue [class^="bg-white/"] {
+    background-color: rgb(255 255 255 / 0.06);
+  }
+  html.dark .surface-blue [class*="hover:bg-white/"]:hover {
+    background-color: rgb(255 255 255 / 0.12);
+  }
+  html.dark .surface-blue [class*="border-white/"],
+  html.dark .surface-blue [class*="ring-white/"] {
+    border-color: rgb(255 255 255 / 0.1);
+    --tw-ring-color: rgb(255 255 255 / 0.08);
+  }
+}
+
+/* Loading dots (components/ui/Spinner.jsx): a smooth, steady turn. */
+@keyframes dot-spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.dot-spinner {
+  animation: dot-spinner-turn 1.1s linear infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot-spinner {
+    animation-duration: 3s;
+  }
+}
+
+/* The Saving overlay and the sign-in welcome screen fade in. */
+@keyframes busy-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.busy-fade {
+  animation: busy-fade-in 0.18s ease-out;
+}
+
+/* Sign-in welcome screen: the logo breathes, the bar fills over the wait. */
+@keyframes welcome-breathe {
+  50% {
+    transform: scale(1.05);
+  }
+}
+.welcome-breathe {
+  animation: welcome-breathe 1.6s ease-in-out infinite;
+}
+@keyframes welcome-progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+.welcome-progress {
+  animation: welcome-progress 1.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* The Saving card rises in softly. */
+@keyframes busy-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+}
+.busy-pop {
+  animation: busy-pop-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Chat: a new message springs up above the Chat button. */
+@keyframes chat-pop {
+  0% { opacity: 0; transform: translateY(16px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(-4px) scale(1.01); }
+  100% { transform: translateY(0) scale(1); }
+}
+.chat-pop {
+  animation: chat-pop 0.35s ease-out;
+}
+
+/* Login fields: white boxes. The browser paints a saved (autofilled)
+   email/password light blue -- keep them white with dark text instead. */
+.login-input:-webkit-autofill,
+.login-input:-webkit-autofill:hover,
+.login-input:-webkit-autofill:focus,
+.login-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #171717;
+  caret-color: #171717;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+  transition: background-color 600000s 0s, color 600000s 0s;
+}
+/* Dark mode: the login boxes are dark, so the saved email/password must not
+   show as a white strip inside them -- same dark colour, light text. */
+html.dark .login-input:-webkit-autofill,
+html.dark .login-input:-webkit-autofill:hover,
+html.dark .login-input:-webkit-autofill:focus,
+html.dark .login-input:-webkit-autofill:active {
+  -webkit-text-fill-color: #eef0f4;
+  caret-color: #eef0f4;
+  -webkit-box-shadow: 0 0 0 1000px #181d27 inset;
+}
+
+/* A choice picked with the arrow keys in a search list (useListKeys). */
+[data-kb-active='true'] {
+  background-color: var(--color-brand-50, #eef8f1) !important;
+  box-shadow: inset 3px 0 0 var(--color-brand-500, #3aa35b);
+}
+html.dark [data-kb-active='true'] {
+  background-color: rgba(58, 163, 91, 0.18) !important;
 }

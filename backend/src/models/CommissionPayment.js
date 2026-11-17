@@ -9,6 +9,7 @@ import { branchScoped } from '../services/branchContext.js';
 const lineSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }, // null for someone who is not a user
+    worker: { type: mongoose.Schema.Types.ObjectId, ref: 'Worker', default: null }, // a worker without a login
     name: { type: String, required: true },
     role: { type: String, default: '' },
     percent: { type: Number, required: true },

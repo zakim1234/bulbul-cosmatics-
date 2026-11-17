@@ -13,6 +13,9 @@ const partnerSchema = new mongoose.Schema(
     notes: { type: String, default: '' },
     totalContributedCents: { type: Number, default: 0 },
     totalWithdrawnCents: { type: Number, default: 0 },
+    // Capital the partner already had in the business before this system:
+    // part of currentEquityCents, but no money moved into any account.
+    openingBalanceCents: { type: Number, default: 0 },
     currentEquityCents: { type: Number, default: 0 },
     totalProfitCents: { type: Number, default: 0 }, // year-end profit shares received (paid out or added to capital)
     isActive: { type: Boolean, default: true },

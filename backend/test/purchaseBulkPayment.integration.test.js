@@ -14,8 +14,8 @@ async function setup(dbName) {
   await mongoose.connect(`mongodb://127.0.0.1:27028/${dbName}_${Date.now()}?replicaSet=stocktest`);
   process.env.JWT_SECRET = 'isolated-bulk-payment-secret';
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
-  const admin = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', role: 'admin' });
-  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['purchases'] });
+  const admin = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', role: 'admin', adminGranted: ['paySuppliers'] });
+  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['paySuppliers', 'purchases'] });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const as = (user) => async (path, body, method = body != null ? 'POST' : 'GET') => {

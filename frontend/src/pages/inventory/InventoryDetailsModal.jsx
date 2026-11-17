@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import client from '../../api/client.js';
 import BatchHistory from '../../components/BatchHistory.jsx';
 import { useNavigate } from 'react-router-dom';
-import { Printer } from 'lucide-react';
+import { Printer, BarChart3, Merge } from 'lucide-react';
+import MergeItemModal from './MergeItemModal.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { hasPermission } from '../../constants/permissions.js';
 import Modal from '../../components/ui/Modal.jsx';
 import Button from '../../components/ui/Button.jsx';
 import Badge, { stockStatusBadge, expiryStatusBadge } from '../../components/ui/Badge.jsx';
@@ -10,16 +13,18 @@ import { formatCurrency, formatDate } from '../../utils/format.js';
 
 function Row({ label, value }) {
   return (
-    <div className="flex items-center justify-between border-b border-slate-50 py-2 last:border-0">
-      <span className="text-sm text-slate-500">{label}</span>
-      <span className="text-sm font-medium text-slate-800">{value}</span>
+    <div className="flex items-center justify-between border-b border-neutral-50 py-2 last:border-0">
+      <span className="text-sm text-neutral-500">{label}</span>
+      <span className="text-sm font-medium text-neutral-800">{value}</span>
     </div>
   );
 }
 
-export default function InventoryDetailsModal({ open, onClose, item: summaryItem }) {
+export default function InventoryDetailsModal({ open, onClose, item: summaryItem, onChanged }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [details, setDetails] = useState(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
   useEffect(() => {
     let active = true;
     if (open && summaryItem) client.get(`/inventory/${summaryItem.id}`).then(r => { if (active) setDetails(r.data.data); }).catch(() => {});
@@ -31,15 +36,28 @@ export default function InventoryDetailsModal({ open, onClose, item: summaryItem
   const expiry = expiryStatusBadge(item.expiryStatus);
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
       title={item.name}
       size="xl"
       footer={
-        <Button onClick={() => navigate(`/inventory/${item.id}/print`)}>
-          <Printer className="h-4 w-4" /> Print Item Record
-        </Button>
+        <>
+          {hasPermission(user, 'mergeItems') && (
+            <Button variant="secondary" onClick={() => setMergeOpen(true)} title="The same medicine entered twice: move this one into the other">
+              <Merge className="h-4 w-4" /> Merge into…
+            </Button>
+          )}
+          {hasPermission(user, 'itemReport') && (
+            <Button variant="secondary" onClick={() => navigate(`/item-report?item=${item.id}`)}>
+              <BarChart3 className="h-4 w-4" /> Item Report
+            </Button>
+          )}
+          <Button onClick={() => navigate(`/inventory/${item.id}/print`)}>
+            <Printer className="h-4 w-4" /> Print Item Record
+          </Button>
+        </>
       }
     >
       <div className="mb-4 flex gap-2">
@@ -58,7 +76,17 @@ export default function InventoryDetailsModal({ open, onClose, item: summaryItem
       <Row label="Expiry Date" value={item.expiryDate ? formatDate(item.expiryDate) : '—'} />
       <Row label="Created" value={formatDate(item.createdAt)} />
       <Row label="Last Updated" value={formatDate(item.updatedAt)} />
-      <BatchHistory item={item} />
+      <BatchHistory item={item} onChanged={() => client.get(`/inventory/${item.id}`).then((r) => setDetails(r.data.data)).catch(() => {})} />
     </Modal>
+    <MergeItemModal
+      open={mergeOpen}
+      item={item}
+      onClose={() => setMergeOpen(false)}
+      onMerged={() => {
+        setMergeOpen(false);
+        onChanged ? onChanged() : onClose();
+      }}
+    />
+    </>
   );
 }

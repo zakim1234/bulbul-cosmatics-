@@ -43,6 +43,9 @@ function printableClone(element, widthPx) {
 export async function buildPdf(element, { orientation = 'portrait' } = {}) {
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas-pro'), import('jspdf')]);
   const page = A4[orientation] || A4.portrait;
+  // Paper is always the light theme, whatever the screen is showing.
+  const wasDark = document.documentElement.classList.contains('dark');
+  document.documentElement.classList.remove('dark');
   const box = printableClone(element, page.px);
   try {
     await document.fonts?.ready;
@@ -67,6 +70,7 @@ export async function buildPdf(element, { orientation = 'portrait' } = {}) {
     return pdf.output('blob');
   } finally {
     box.remove();
+    if (wasDark) document.documentElement.classList.add('dark');
   }
 }
 

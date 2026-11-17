@@ -55,8 +55,9 @@ export function AuthProvider({ children }) {
     return () => clearInterval(interval);
   }, [user, refreshUser]);
 
-  const login = async (username, password) => {
-    const res = await client.post('/auth/login', { username, password });
+  // Signs in with an email (or, for users without one yet, their old username).
+  const login = async (email, password) => {
+    const res = await client.post('/auth/login', { email, password });
     localStorage.setItem('pos_token', res.data.data.token);
     setUser(res.data.data.user);
     return res.data.data.user;

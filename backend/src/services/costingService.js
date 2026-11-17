@@ -13,26 +13,23 @@ import { ApiError } from '../utils/ApiError.js';
 // average cost is discarded entirely rather than blended in -- the new
 // average simply becomes the incoming unit cost.
 //
-// Rounding policy: the project stores money as integer cents everywhere
-// (see utils/money.js), so this returns integer cents too. A weighted
-// average frequently does not divide evenly; this uses standard round-half-
-// up (Math.round) on the blended total, matching the rounding already used
-// for FIFO lot-blended costs elsewhere in the codebase (lotService.js,
-// batchService.js). This is Option B from the spec: plain cents with a
-// documented, deterministic rounding rule, chosen over a higher-precision
-// "micro-cents" representation because introducing a second money precision
-// tier would ripple through every consumer of *Cents fields across the
-// codebase (models, reports, frontend display) for a rounding drift that is
-// at most a fraction of a cent per receipt -- not worth the blast radius.
+// No rounding: the average is kept exactly as it divides (e.g. 33.333...
+// cents), never cut to whole cents. Rounding it lost a fraction of a cent on
+// every blend, and those fractions built up into a gap between the stock
+// value and the books (the Balance Sheet out by a few cents). Kept exact,
+// the stock value and the cost of what is sold always agree; amounts are
+// rounded to whole cents only when shown (utils/money.js fromCents).
 export function calculateWeightedAverageCost({ oldQuantity, oldAverageCostCents, incomingQuantity, incomingUnitCostCents }) {
-  if (!Number.isFinite(oldQuantity) || oldQuantity < 0) throw new ApiError(400, 'Invalid current stock quantity for cost calculation.');
+  // oldQuantity may be below zero (sold ahead of stock): like zero, the
+  // incoming cost becomes the average.
+  if (!Number.isFinite(oldQuantity)) throw new ApiError(400, 'Invalid current stock quantity for cost calculation.');
   if (!Number.isFinite(oldAverageCostCents) || oldAverageCostCents < 0) throw new ApiError(400, 'Invalid current average cost for cost calculation.');
   if (!Number.isSafeInteger(incomingQuantity) || incomingQuantity <= 0) throw new ApiError(400, 'Incoming quantity must be a positive whole number.');
   if (!Number.isFinite(incomingUnitCostCents) || incomingUnitCostCents < 0) throw new ApiError(400, 'Incoming unit cost cannot be negative.');
 
-  if (oldQuantity <= 0) return Math.round(incomingUnitCostCents);
+  if (oldQuantity <= 0) return incomingUnitCostCents;
 
   const newQuantity = oldQuantity + incomingQuantity;
   const newInventoryValueCents = oldQuantity * oldAverageCostCents + incomingQuantity * incomingUnitCostCents;
-  return Math.round(newInventoryValueCents / newQuantity);
+  return newInventoryValueCents / newQuantity;
 }

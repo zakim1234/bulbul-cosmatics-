@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import client from '../../api/client.js';
 import { formatCurrency, formatDate, formatTime } from '../../utils/format.js';
@@ -17,6 +17,16 @@ import DocHeader, { DocInfo, DocSummary, DocFooter, DOC_TH, DOC_THEAD_ROW, docRo
 // is a durable reference to that specific return.
 export default function ReturnReceiptPage() {
   const { id, index } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Opened from its invoice: just go back. Opened from anywhere else (the
+  // customer page, right after the return): swap this page for the invoice,
+  // so the invoice's own Back returns to where the user started -- never
+  // round in a circle between the two.
+  const backToInvoice = () =>
+    location.state?.fromInvoice
+      ? navigate(-1)
+      : navigate(`/receipt/${id}`, { replace: true, state: location.state?.backLabel ? { backLabel: location.state.backLabel } : undefined });
   const [sale, setSale] = useState(null);
   const [error, setError] = useState('');
 
@@ -27,11 +37,11 @@ export default function ReturnReceiptPage() {
       .catch((err) => setError(err.friendlyMessage || 'Receipt not found.'));
   }, [id]);
 
-  if (error) return <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700">{error}</div>;
+  if (error) return <div className="rounded-lg bg-brand-50 p-4 text-sm text-brand-700">{error}</div>;
   if (!sale) return <PageSpinner />;
 
   const ret = sale.returns[Number(index)];
-  if (!ret) return <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700">This return could not be found on this invoice.</div>;
+  if (!ret) return <div className="rounded-lg bg-brand-50 p-4 text-sm text-brand-700">This return could not be found on this invoice.</div>;
 
   const returnReceiptNumber = `${sale.receiptNumber}-R${Number(index) + 1}`;
   const invoiceBalanceAfter = ret.invoiceBalanceAfter ?? sale.outstanding;
@@ -40,9 +50,9 @@ export default function ReturnReceiptPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between no-print">
-        <Link to={`/receipt/${id}`} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <button type="button" onClick={backToInvoice} className="flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> Back to Invoice
-        </Link>
+        </button>
         <div className="flex gap-2">
           <SharePdfButton
             fileName={`Return-${returnReceiptNumber}`}
@@ -57,7 +67,7 @@ export default function ReturnReceiptPage() {
 
       <div
         id="print-area"
-        className="mx-auto max-w-[148mm] rounded-2xl border border-slate-200 bg-white p-6 text-[13px] text-neutral-900 shadow-sm print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
+        className="mx-auto max-w-[148mm] rounded-2xl border border-neutral-200/80 bg-white p-6 text-[13px] text-neutral-900 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
       >
         <DocHeader compact title="Return Receipt" meta={<span className="font-semibold">{returnReceiptNumber}</span>} />
 
@@ -93,7 +103,10 @@ export default function ReturnReceiptPage() {
           lines={[
             ret.debtReduced > 0 && ['Applied against debt', formatCurrency(ret.debtReduced)],
             ret.walletRefund > 0 && ['Returned to wallet', formatCurrency(ret.walletRefund)],
-            ret.refund > 0 && ['Refunded', formatCurrency(ret.refund)],
+            ret.refund > 0 &&
+              (ret.refundTo === 'WALLET'
+                ? ['Put in the wallet', formatCurrency(ret.refund)]
+                : [`Given back${ret.refundAccountName ? ` from ${ret.refundAccountName}` : ''}${ret.refundReference ? ` to ${ret.refundReference}` : ''}`, formatCurrency(ret.refund)]),
             ret.reason && ['Reason', ret.reason],
           ]}
           grand={['Return value', formatCurrency(ret.amount)]}

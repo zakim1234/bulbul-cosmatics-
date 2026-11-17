@@ -7,10 +7,17 @@ const schema = new mongoose.Schema({
   externalSerialNumber: { type: String, default: '', trim: true },
   supplier: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', default: null },
   purchaseInvoice: { type: mongoose.Schema.Types.ObjectId, ref: 'Purchase', default: null },
-  rows: [{ item: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem', required: true }, itemName: String, batch: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryLot', required: true }, quantity: Number, costPriceCents: Number, sellingPriceCents: Number, expiryDate: Date }],
+  // Opening stock brought in from an Excel file (stock the company already
+  // had before this system): its value counts in equity as "Opening stock",
+  // so it does not put the Balance Sheet out.
+  opening: { type: Boolean, default: false },
+  rows: [{ item: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem', required: true }, itemName: String, batch: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryLot', default: null }, quantity: Number, costPriceCents: Number, sellingPriceCents: Number, expiryDate: Date, clientKey: String }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 schema.index({ externalSerialNumber: 1 });
+// The Stock page's id for each typed row: a row sent twice (the answer to the
+// first send was lost) is recognised and not received again.
+schema.index({ 'rows.clientKey': 1 }, { sparse: true });
 schema.plugin(branchScoped);
 
 export default mongoose.model('StockEntry', schema);

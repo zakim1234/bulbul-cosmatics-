@@ -3,6 +3,8 @@ import PartnerCapitalTransaction from '../models/PartnerCapitalTransaction.js';
 import ProfitDistribution from '../models/ProfitDistribution.js';
 import Account from '../models/Account.js';
 import { nextSequence } from '../models/Counter.js';
+import { getCompanySetting } from '../models/CompanySetting.js';
+import { setAsideForYearCents } from './fixedAssetFundService.js';
 import { computePeriod } from './profitLossService.js';
 import { postImmediateTransaction } from './accountService.js';
 import { ApiError } from '../utils/ApiError.js';
@@ -13,11 +15,16 @@ import { currentBranch } from './branchContext.js';
 // Profit & Loss and the Balance Sheet) split between the partners by
 // percentage -- by default each partner's share of the capital.
 
+// It includes the year's opening net income (profit made before the move to
+// this system, entered on the Balance Sheet), exactly as the Balance Sheet's
+// Net Income line does -- so the profit shared is the Net Income shown there.
 export async function yearNetProfitCents(year) {
   const start = new Date(year, 0, 1);
   const end = new Date(year + 1, 0, 1, 0, 0, 0, -1);
-  const { netIncomeCents } = await computePeriod({ start, end, basis: 'accrual' });
-  return netIncomeCents;
+  const [{ netIncomeCents }, setting, setAsideCents] = await Promise.all([computePeriod({ start, end, basis: 'accrual' }), getCompanySetting(), setAsideForYearCents(year)]);
+  const openingCents = setting.openingNetIncomeYear === year ? setting.openingNetIncomeCents || 0 : 0;
+  // Profit already set aside into the Fixed Asset Wallet is not shared again.
+  return netIncomeCents + openingCents - setAsideCents;
 }
 
 function parseYear(value) {

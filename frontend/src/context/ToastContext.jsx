@@ -7,16 +7,26 @@ let idCounter = 0;
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
+  const shown = useRef(new Map()); // message -> id of the toast showing it
 
   const remove = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+    for (const [message, shownId] of shown.current) if (shownId === id) shown.current.delete(message);
     clearTimeout(timers.current[id]);
     delete timers.current[id];
   }, []);
 
   const push = useCallback(
     (message, type = 'info', duration = 4000) => {
+      // The same message pressed again is not stacked on top of itself.
+      const showing = shown.current.get(message);
+      if (showing) {
+        clearTimeout(timers.current[showing]);
+        timers.current[showing] = setTimeout(() => remove(showing), duration);
+        return showing;
+      }
       const id = ++idCounter;
+      shown.current.set(message, id);
       setToasts((prev) => [...prev, { id, message, type }]);
       timers.current[id] = setTimeout(() => remove(id), duration);
       return id;
@@ -42,8 +52,8 @@ export function ToastProvider({ children }) {
               t.type === 'success'
                 ? 'bg-emerald-600 text-white'
                 : t.type === 'error'
-                ? 'bg-rose-600 text-white'
-                : 'bg-slate-800 text-white'
+                ? 'bg-primary text-white'
+                : 'surface-blue'
             }`}
           >
             {t.message}

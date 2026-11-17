@@ -14,8 +14,8 @@ async function setup(dbName) {
   await mongoose.connect(`mongodb://127.0.0.1:27028/${dbName}_${Date.now()}?replicaSet=stocktest`);
   process.env.JWT_SECRET = 'isolated-vendor-plan-secret';
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
-  const admin = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', role: 'admin' });
-  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['purchases'] });
+  const admin = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', role: 'admin', adminGranted: ['paySuppliers'] });
+  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['purchases', 'vendorBalances'] });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const as = (user) => async (path, body, method = body != null ? 'POST' : 'GET') => {
@@ -75,7 +75,7 @@ test('VENDOR BALANCES -- list owed, save allocations, pay them all at once', { t
     assert.match(saved.data.planNumber, /^VPLAN-\d{4}-\d{6}$/);
     assert.equal(saved.data.rows.length, 2, 'zero rows are dropped');
     assert.equal(saved.data.totalAllocated, 550);
-    assert.equal((await asCashier('/purchases/payment-plan/pay', { paymentAccountId: evc.id })).status, 403);
+    assert.equal((await asCashier('/purchases/payment-plan/pay', { paymentAccountId: evc.id })).status, 403, 'not given Pay suppliers');
 
     // Saving again edits the same open plan.
     const resaved = await request('/purchases/payment-plan', { rows: [{ supplierId: alpha.id, allocation: 400 }, { supplierId: beta.id, allocation: 50 }], note: 'Week 41' }, 'PUT');
@@ -217,7 +217,10 @@ test('REVERSIBLE -- cancel a receipt, cancel a paid sheet, delete an invoice wit
     await request('/purchases/payment-plan', { rows: [{ supplierId: alpha.id, allocation: 400 }, { supplierId: beta.id, allocation: 100 }] }, 'PUT');
     const plan = await request('/purchases/payment-plan/pay', { paymentAccountId: evc.id });
     assert.equal(await balance(), -50000);
-    assert.equal((await asCashier(`/purchases/payment-plans/${plan.data.id}/cancel`, {})).status, 403);
+    assert.equal((await asCashier(`/purchases/payment-plans/${plan.data.id}/cancel`, {})).status, 403, 'not given Pay suppliers');
+    // Paying does not include cancelling: that is its own permission.
+    assert.equal((await request(`/purchases/payment-plans/${plan.data.id}/cancel`, { reason: 'x' })).status, 403, 'Pay suppliers alone cannot cancel');
+    await User.updateOne({ username: 'admin' }, { $addToSet: { adminGranted: 'cancelVendorPayments' } });
     const cancelled = await request(`/purchases/payment-plans/${plan.data.id}/cancel`, { reason: 'wrong amounts' });
     assert.equal(cancelled.status, 200, JSON.stringify(cancelled));
     assert.equal(cancelled.data.status, 'CANCELLED');

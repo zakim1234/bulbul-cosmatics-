@@ -32,8 +32,11 @@ export const quickCreateItem = asyncHandler(async (req, res) => {
   if (sellingPrice === '' || sellingPrice == null || !Number.isFinite(selling) || selling < 0 || !Number.isSafeInteger(toCents(selling))) {
     throw new ApiError(400, 'Enter a valid selling price.');
   }
-  const quantity = Number(initialQuantity);
-  if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new ApiError(400, 'Initial quantity must be a positive whole number.');
+  // The item is made with no stock: stock comes in only on a Supplier
+  // Invoice (which records what is owed for it). Sold before then, it goes
+  // below zero and the invoice makes it up. (initialQuantity is ignored.)
+  void initialQuantity;
+  const quantity = 0;
   const costNumber = cost === '' || cost == null ? 0 : Number(cost);
   if (!Number.isFinite(costNumber) || costNumber < 0 || !Number.isSafeInteger(toCents(costNumber))) throw new ApiError(400, 'Cost cannot be negative.');
 

@@ -3,14 +3,16 @@ import { branchScoped } from '../services/branchContext.js';
 
 // One manually-entered row of a supplier's paper invoice: item name (free
 // text -- not required to match a canonical InventoryItem), quantity, cost,
-// and the line total. No selling price -- this is a purchase-facing archive,
-// never a sale.
+// and the line total. Selling price and expiry are kept only when the invoice
+// was also received into stock.
 const rowSchema = new mongoose.Schema(
   {
     itemName: { type: String, required: true, trim: true },
     quantity: { type: Number, required: true, min: 0 },
     costCents: { type: Number, required: true, min: 0 },
     totalCents: { type: Number, required: true, min: 0 }, // quantity * costCents, historical
+    sellingPriceCents: { type: Number, default: null, min: 0 },
+    expiryDate: { type: Date, default: null },
   },
   { _id: false }
 );
@@ -30,9 +32,14 @@ const schema = new mongoose.Schema(
     supplierName: { type: String, default: '' },
     rows: { type: [rowSchema], required: true, validate: (v) => Array.isArray(v) && v.length > 0 },
     grandTotalCents: { type: Number, required: true, min: 0 },
+    // A discount the supplier gave on the whole invoice: the grand total
+    // (what is owed) is the rows' total less this.
+    discountCents: { type: Number, default: 0, min: 0 },
     notes: { type: String, default: '', maxlength: 2000 },
     // The purchase invoice (debt) created from this archive, kept in step with it.
     purchase: { type: mongoose.Schema.Types.ObjectId, ref: 'Purchase', default: null },
+    // Set when the invoice's items were received into stock on save.
+    stockEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'StockEntry', default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   // autoIndex is disabled here on purpose, same reasoning as

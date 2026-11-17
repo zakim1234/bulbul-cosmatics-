@@ -18,6 +18,8 @@ const customerSchema = new mongoose.Schema(
     // Increases on Add Deposit, decreases when applied to a sale. Never
     // negative.
     walletBalanceCents: { type: Number, default: 0, min: 0 },
+    // The most this customer may owe (set by an admin); null = no limit.
+    creditLimitCents: { type: Number, default: null, min: 0 },
     // When true, wallet money pays this customer's debt automatically (on
     // deposit, at Close Day, after a reversal). Off by default: the money
     // stays in the wallet until someone chooses to use it on the debt.
@@ -25,6 +27,10 @@ const customerSchema = new mongoose.Schema(
     totalPurchasedCents: { type: Number, default: 0 },
     totalPaidCents: { type: Number, default: 0 },
     notes: { type: String, default: '' },
+    archivedAt: { type: Date, default: null },
+    // Set when added from the Add Many sheet: that row's id, so a row sent
+    // twice is not added twice.
+    importKey: { type: String, default: undefined },
   },
   { timestamps: true }
 );
@@ -36,6 +42,7 @@ customerSchema.pre('validate', function setNormalizedName(next) {
 
 customerSchema.index({ normalizedName: 1 });
 customerSchema.index({ phone: 1 });
+customerSchema.index({ importKey: 1 }, { sparse: true });
 customerSchema.index({ name: 'text', phone: 'text' });
 
 customerSchema.statics.normalize = normalize;

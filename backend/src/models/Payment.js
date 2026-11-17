@@ -3,7 +3,8 @@ import { branchScoped } from '../services/branchContext.js';
 
 const allocationSchema = new mongoose.Schema(
   {
-    sale: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', required: true },
+    // null: the opening balance (debt on no invoice).
+    sale: { type: mongoose.Schema.Types.ObjectId, ref: 'Sale', default: null },
     receiptNumber: { type: String, required: true },
     amountCents: { type: Number, required: true, min: 0 },
   },

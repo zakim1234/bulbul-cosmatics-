@@ -22,10 +22,10 @@ test('TEST 4 -- zero-stock rule discards stale average cost entirely', () => {
   assert.equal(avg, 200); // $2.00, NOT a blend with the stale $8.00
 });
 
-test('negative on-hand quantity is treated the same as zero stock (defensive)', () => {
-  // Should never happen in practice, but the zero-stock rule must not
-  // silently blend a corrupt negative quantity into the new average.
-  assert.throws(() => calculateWeightedAverageCost({ oldQuantity: -1, oldAverageCostCents: 800, incomingQuantity: 10, incomingUnitCostCents: 200 }));
+test('negative on-hand quantity is treated the same as zero stock', () => {
+  // Sold ahead of stock: the stale average is not blended in; the incoming
+  // cost becomes the average.
+  assert.equal(calculateWeightedAverageCost({ oldQuantity: -200, oldAverageCostCents: 800, incomingQuantity: 300, incomingUnitCostCents: 200 }), 200);
 });
 
 test('exact division: 3 units @ $1 + 2 units @ $2 = $1.40 average', () => {
@@ -33,24 +33,25 @@ test('exact division: 3 units @ $1 + 2 units @ $2 = $1.40 average', () => {
   assert.equal(avg, 140);
 });
 
-test('fractional cent rounds half up: 1@$1.00 + 1@$1.01 = $1.005 rounds to $1.01', () => {
+test('a fraction of a cent is kept, not rounded: 1@$1.00 + 1@$1.01 = 100.5 cents', () => {
   const avg = calculateWeightedAverageCost({ oldQuantity: 1, oldAverageCostCents: 100, incomingQuantity: 1, incomingUnitCostCents: 101 });
-  // (100 + 101) / 2 = 100.5 -> Math.round -> 101
-  assert.equal(avg, 101);
+  assert.equal(avg, 100.5);
 });
 
-test('fractional cent rounds down when below half: 3@$1.00 + 1@$1.02 -> 402/4=100.5 rounds to 101', () => {
+test('exact average: 3@$1.00 + 1@$1.02 = 402/4 = 100.5 cents', () => {
   const avg = calculateWeightedAverageCost({ oldQuantity: 3, oldAverageCostCents: 100, incomingQuantity: 1, incomingUnitCostCents: 102 });
-  assert.equal(avg, 101); // (300+102)/4 = 100.5 -> 101
+  assert.equal(avg, 100.5);
 });
 
 test('concurrent-style sequential blend matches a single combined blend (associativity check)', () => {
   // 10 @ $2 existing, then two receipts of 10@$4 and 10@$8 applied in
   // sequence must land on the same total as blending all three at once:
-  // (10*200 + 10*400 + 10*800) / 30 = 14000/30 = 466.66... -> 467
+  // (10*200 + 10*400 + 10*800) / 30 = 14000/30 = 466.66... (kept exact)
   const afterFirst = calculateWeightedAverageCost({ oldQuantity: 10, oldAverageCostCents: 200, incomingQuantity: 10, incomingUnitCostCents: 400 });
   const afterSecond = calculateWeightedAverageCost({ oldQuantity: 20, oldAverageCostCents: afterFirst, incomingQuantity: 10, incomingUnitCostCents: 800 });
-  assert.equal(afterSecond, 467);
+  assert.ok(Math.abs(afterSecond - 14000 / 30) < 1e-9);
+  // The stock value is exactly what was paid: nothing lost to rounding.
+  assert.ok(Math.abs(30 * afterSecond - 14000) < 1e-6);
 });
 
 test('validates inputs: rejects non-positive incoming quantity', () => {

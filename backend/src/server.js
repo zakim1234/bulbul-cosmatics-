@@ -6,11 +6,16 @@ import { migrateInventorySchema } from './utils/migrateInventoryV2.js';
 import { migrateSalesSchema } from './utils/migrateSalesV2.js';
 import { seedDefaultAccounts } from './utils/seedAccounts.js';
 import { migrateBranches } from './utils/migrateBranches.js';
+import { confirmQuotationDrafts } from './utils/confirmQuotationDrafts.js';
+import { migratePermissions } from './utils/migratePermissions.js';
 import Branch from './models/Branch.js';
 import { runWithBranch } from './services/branchContext.js';
 import InventoryItem from './models/InventoryItem.js';
+import { startAutoCloseDay } from './services/autoCloseDay.js';
+import { startAutoWalletTake } from './services/autoWalletTake.js';
 
 const PORT = process.env.PORT || 5010;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // JWT_SECRET has no safe default -- authController signs/verifies every
 // token with it, so a missing secret must fail loudly at startup rather
@@ -38,10 +43,19 @@ async function start() {
     // use of a model builds them mid-request, and a payment transaction
     // running at that moment is aborted and retried from the start.
     await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
+    // Quotation invoices still Pending from before they became final at once.
+    await migratePermissions();
+    await confirmQuotationDrafts();
     // Bind to 0.0.0.0 (not just localhost) so a reverse proxy (Nginx, etc.)
-    // running outside this process/container can reach the API.
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`[server] Inventory API listening on port ${PORT}`);
+    // running outside this process/container can reach the API. With nginx
+    // on the same machine, set HOST=127.0.0.1 so the API port is never
+    // reachable from the network directly.
+    app.listen(PORT, HOST, () => {
+      console.log(`[server] Inventory API listening on ${HOST}:${PORT}`);
+      // Close Day on its own at 10:00 PM, in case nobody closed it.
+      startAutoCloseDay();
+      // The company wallet's automatic daily take at 12:00 noon.
+      startAutoWalletTake();
     });
   } catch (err) {
     console.error('[server] failed to start:', err.message);

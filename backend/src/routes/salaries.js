@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireRole } from '../middleware/auth.js';
+import { requireAuth, requirePermission } from '../middleware/auth.js';
 import {
   getSalarySheet,
   saveSalarySheet,
@@ -8,13 +8,20 @@ import {
   getSalarySheetById,
   cancelSalarySheet,
   getSalaryStatement,
+  listWorkers,
+  createWorker,
+  updateWorker,
 } from '../controllers/salaryController.js';
 
 // Salaries are admin/manager only.
 const router = Router();
 router.use(requireAuth);
-router.use(requireRole('admin', 'manager'));
+// The Super Admin, or an admin they allowed; nobody else.
+router.use(requirePermission('salaries'));
 
+router.get('/workers', listWorkers);
+router.post('/workers', createWorker);
+router.put('/workers/:id', updateWorker);
 router.get('/sheet', getSalarySheet);
 router.put('/sheet', saveSalarySheet);
 router.post('/sheet/pay', paySalarySheet);

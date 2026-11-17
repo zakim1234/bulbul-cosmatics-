@@ -3,12 +3,12 @@ import { formatCurrency } from '../../utils/format.js';
 
 // One look for every report chart: quiet axes, horizontal grid only,
 // rounded bars, gradient areas and a shared tooltip.
-export const PALETTE = ['#c9296d', '#0ea5e9', '#10b981', '#f59e0b', '#f43f5e', '#5a1446', '#14b8a6', '#64748b'];
-export const COLORS = { revenue: '#c9296d', profit: '#10b981', cost: '#f59e0b', loss: '#f43f5e', count: '#0ea5e9', muted: '#cbd5e1' };
+export const PALETTE = ['#3FAC64', '#98A2B3', '#2A7641', '#D0D5DD', '#475467', '#82D29E', '#1F4D2F', '#667085'];
+export const COLORS = { revenue: '#3FAC64', profit: '#98A2B3', cost: '#D0D5DD', loss: '#475467', count: '#5BBF7E', muted: '#EAECF0' };
 
-export const axisProps = { tick: { fontSize: 11, fill: '#94a3b8' }, axisLine: false, tickLine: false };
-export const gridProps = { vertical: false, stroke: '#eef2f7' };
-export const vGridProps = { horizontal: false, stroke: '#eef2f7' };
+export const axisProps = { tick: { fontSize: 11, fill: '#98A2B3' }, axisLine: false, tickLine: false };
+export const gridProps = { vertical: false, stroke: '#EAECF0' };
+export const vGridProps = { horizontal: false, stroke: '#EAECF0' };
 
 export function compactMoney(v) {
   const n = Number(v) || 0;
@@ -30,14 +30,14 @@ export function gradient(id, color) {
 export function ChartTooltip({ active, payload, label, money = true, labelFormatter }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-xl border border-slate-100 bg-white/95 px-3.5 py-2.5 text-xs shadow-lg backdrop-blur">
-      {label != null && label !== '' && <p className="mb-1.5 font-semibold text-slate-700">{labelFormatter ? labelFormatter(label) : label}</p>}
+    <div className="rounded-xl border border-neutral-100 bg-white/95 px-3.5 py-2.5 text-xs shadow-lg backdrop-blur">
+      {label != null && label !== '' && <p className="mb-1.5 font-semibold text-neutral-700">{labelFormatter ? labelFormatter(label) : label}</p>}
       {payload.map((p) => (
         <p key={p.dataKey ?? p.name} className="flex items-center justify-between gap-6 py-0.5">
-          <span className="flex items-center gap-1.5 text-slate-500">
+          <span className="flex items-center gap-1.5 text-neutral-500">
             <span className="h-2 w-2 rounded-full" style={{ background: p.color || p.payload?.fill }} /> {p.name}
           </span>
-          <span className="font-semibold tabular-nums text-slate-800">{money ? formatCurrency(p.value) : p.value}</span>
+          <span className="font-semibold tabular-nums text-neutral-800">{money ? formatCurrency(p.value) : p.value}</span>
         </p>
       ))}
     </div>
@@ -46,7 +46,7 @@ export function ChartTooltip({ active, payload, label, money = true, labelFormat
 
 export function LegendDots({ items }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+    <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-500">
       {items.map(({ label, color }) => (
         <span key={label} className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full" style={{ background: color }} /> {label}
@@ -75,8 +75,8 @@ export function DonutChart({ data, valueKey, nameKey, colors = PALETTE, money = 
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[10px] uppercase tracking-wide text-slate-400">{centerLabel}</span>
-          <span className="text-sm font-bold tabular-nums text-slate-800">{fmt(total)}</span>
+          <span className="text-[10px] uppercase tracking-wide text-neutral-400">{centerLabel}</span>
+          <span className="text-sm font-bold tabular-nums text-neutral-800">{fmt(total)}</span>
         </div>
       </div>
       <ul className="w-full space-y-2">
@@ -85,13 +85,13 @@ export function DonutChart({ data, valueKey, nameKey, colors = PALETTE, money = 
           const pct = total > 0 ? Math.round((v / total) * 100) : 0;
           return (
             <li key={d[nameKey]} className="flex items-center justify-between gap-3 text-sm">
-              <span className="flex min-w-0 items-center gap-2 text-slate-600">
+              <span className="flex min-w-0 items-center gap-2 text-neutral-600">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: d.color || colors[i % colors.length] }} />
                 <span className="truncate">{d[nameKey]}</span>
               </span>
               <span className="shrink-0 tabular-nums">
-                <span className="font-semibold text-slate-800">{fmt(v)}</span>
-                <span className="ml-1.5 text-xs text-slate-400">{pct}%</span>
+                <span className="font-semibold text-neutral-800">{fmt(v)}</span>
+                <span className="ml-1.5 text-xs text-neutral-400">{pct}%</span>
               </span>
             </li>
           );

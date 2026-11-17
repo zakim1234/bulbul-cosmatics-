@@ -20,8 +20,8 @@ async function setup(dbName) {
   const bakaal = await Branch.create({ name: 'Bakaal Branch' });
   clearBranchCache();
   const owner = await User.create({ username: 'owner', name: 'Owner', passwordHash: 'unused', role: 'admin', isSuperAdmin: true });
-  const hodanAdmin = await User.create({ username: 'hodan', name: 'Hodan Admin', passwordHash: 'unused', role: 'admin', branch: hodan._id });
-  const bakaalAdmin = await User.create({ username: 'bakaal', name: 'Bakaal Admin', passwordHash: 'unused', role: 'admin', branch: bakaal._id });
+  const hodanAdmin = await User.create({ username: 'hodan', name: 'Hodan Admin', passwordHash: 'unused', role: 'admin', branch: hodan._id, adminGranted: ['createCustomers'] });
+  const bakaalAdmin = await User.create({ username: 'bakaal', name: 'Bakaal Admin', passwordHash: 'unused', role: 'admin', branch: bakaal._id, adminGranted: ['createCustomers'] });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const as = (user, branchId) => async (path, body, method = body != null ? 'POST' : 'GET') => {

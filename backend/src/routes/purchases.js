@@ -11,7 +11,10 @@ import {
   addPurchasePayment,
   listPurchasePayments,
   reversePurchasePayment,
+  createOpeningBalancesBulk,
+  getOpeningBalancesSheet,
 } from '../controllers/purchaseController.js';
+import { clearPurchases } from '../controllers/clearController.js';
 import {
   listOwedSuppliers,
   listSupplierOutstanding,
@@ -33,24 +36,32 @@ router.get('/suppliers/:supplierId/statement', getSupplierStatement);
 // Bulk payments -- before '/:id' so 'bulk-payments' is never read as an id.
 router.get('/bulk-payments/suppliers', listOwedSuppliers);
 router.get('/bulk-payments/outstanding', listSupplierOutstanding);
-router.post('/bulk-payments', createBulkPayment);
+const paySuppliers = requirePermission('paySuppliers');
+router.post('/bulk-payments', paySuppliers, createBulkPayment);
 router.get('/bulk-payments/:bulkId', getBulkPayment);
 router.post('/bulk-payments/:bulkId/cancel', requireRole('admin', 'manager'), cancelBulk);
 // Vendor Balance Summary / payment plan.
-router.get('/payment-plan', getPaymentPlan);
-router.put('/payment-plan', savePaymentPlan);
-router.post('/payment-plan/pay', requireRole('admin', 'manager'), payPaymentPlan);
-router.get('/payment-plans', listPaymentPlans);
-router.get('/payment-plans/:planId', getPaymentPlanById);
-router.post('/payment-plans/:planId/cancel', requireRole('admin', 'manager'), cancelPaymentPlan);
+const vendorBalances = requirePermission('vendorBalances');
+router.get('/payment-plan', vendorBalances, getPaymentPlan);
+router.put('/payment-plan', vendorBalances, savePaymentPlan);
+// Paying it: anyone given Vendor Balances + Pay suppliers. Cancelling a paid
+// sheet is its own permission (Cancel supplier payments), off unless given.
+router.post('/payment-plan/pay', vendorBalances, paySuppliers, payPaymentPlan);
+router.get('/payment-plans', vendorBalances, listPaymentPlans);
+router.get('/payment-plans/:planId', vendorBalances, getPaymentPlanById);
+router.post('/payment-plans/:planId/cancel', vendorBalances, requirePermission('cancelVendorPayments'), cancelPaymentPlan);
+router.get('/opening-balances/sheet', requirePermission('openingBalances'), getOpeningBalancesSheet);
+router.post('/opening-balances/bulk', requirePermission('openingBalances'), createOpeningBalancesBulk);
+// Delete every purchase invoice in the branch (Super Admin, typed DELETE).
+router.post('/clear', clearPurchases);
 router.post('/', createPurchase);
 router.get('/:id', getPurchase);
 router.put('/:id', requireRole('admin', 'manager'), updatePurchase);
 router.delete('/:id', requireRole('admin', 'manager'), deletePurchase);
 router.post('/:id/void', requireRole('admin', 'manager'), voidPurchase);
 router.get('/:id/payments', listPurchasePayments);
-router.post('/:id/payments', addPurchasePayment);
-router.put('/:id/payments/:paymentId', requireRole('admin', 'manager'), updatePurchasePayment);
+router.post('/:id/payments', paySuppliers, addPurchasePayment);
+router.put('/:id/payments/:paymentId', paySuppliers, requireRole('admin', 'manager'), updatePurchasePayment);
 router.post('/:id/payments/:paymentId/reverse', requireRole('admin', 'manager'), reversePurchasePayment);
 
 export default router;

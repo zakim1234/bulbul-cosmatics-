@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, MoreHorizontal, Filter } from 'lucide-react';
 import client from '../../api/client.js';
+import { fetchAll } from '../../api/fetchAll.js';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { hasPermission } from '../../constants/permissions.js';
+import { hasPermission, canEditInvoice } from '../../constants/permissions.js';
 import { useDebounce } from '../../hooks/useDebounce.js';
 import { formatCurrency, formatDateTime } from '../../utils/format.js';
 import { BUSINESS } from '../../constants/business.js';
@@ -14,7 +15,6 @@ import DayClosedNotice from '../../components/DayClosedNotice.jsx';
 import Button from '../../components/ui/Button.jsx';
 import Card from '../../components/ui/Card.jsx';
 import { Input, Select, FormField } from '../../components/ui/Field.jsx';
-import Pagination from '../../components/ui/Pagination.jsx';
 import POSPage from './POSPage.jsx';
 
 const STATUS = { DRAFT: 'Draft', CONFIRMED: 'Submitted', CANCELLED: 'Cancelled' };
@@ -46,7 +46,7 @@ export default function SalesInvoicePage() {
     if (editParam || hasUnfinishedNewDraft) return; // this render is about to show the invoice, not the list -- no need to load it
     let active = true;
     setLoading(true); setError('');
-    client.get('/sales', { params: { ...debounced, page, limit: 20 } }).then(res => { if (active) setResult(res.data); }).catch(err => { if (active) setError(err.friendlyMessage || 'Unable to load sales invoices.'); }).finally(() => { if (active) setLoading(false); });
+    fetchAll('/sales', { ...debounced }).then((data) => ({ data })).then(res => { if (active) setResult(res.data); }).catch(err => { if (active) setError(err.friendlyMessage || 'Unable to load sales invoices.'); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [debounced, page, refresh, editParam, hasUnfinishedNewDraft]);
   if (editParam) return <POSPage key={editParam} />;
@@ -58,7 +58,7 @@ export default function SalesInvoicePage() {
     <PageHeader title="Sales Invoice" subtitle="Draft invoices are submitted by Close Day." actions={<div className="flex flex-wrap gap-2">{addButton}</div>} />
     {closed && <DayClosedNotice compact />}
     <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Select aria-label="List View" value={compact ? 'compact' : 'list'} onChange={e => setCompact(e.target.value === 'compact')}><option value="list">List View</option><option value="compact">Compact List View</option></Select><Button variant="secondary" aria-label="Refresh invoices" onClick={() => setRefresh(n => n + 1)} disabled={loading}><RefreshCw size={16} /></Button><Button variant="secondary" aria-label="Toggle filters" aria-expanded={showFilters} onClick={() => setShowFilters(v => !v)}><Filter size={16} /></Button></div><div className="flex items-center gap-2"><Select aria-label="Last Updated On sorting" value={filters.sortDir} onChange={e => setFilter('sortDir', e.target.value)}><option value="desc">Last Updated On: Newest</option><option value="asc">Last Updated On: Oldest</option></Select><Button variant="secondary" aria-label="Invoice list settings" aria-expanded={settings} onClick={() => setSettings(v => !v)}><MoreHorizontal size={16} /></Button></div></div>
-    {settings && <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={showModified} onChange={e => setShowModified(e.target.checked)} /> Show Last Modified column</label></div>}
+    {settings && <div className="rounded-lg border border-neutral-200/80 bg-white p-3 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={showModified} onChange={e => setShowModified(e.target.checked)} /> Show Last Modified column</label></div>}
     {showFilters && <Card><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <FormField label="ID"><Input value={filters.id} onChange={e => setFilter('id', e.target.value)} placeholder="INV-…" /></FormField>
       <FormField label="Title"><Input value={filters.title} onChange={e => setFilter('title', e.target.value)} placeholder="Invoice title (customer name)" /></FormField>
@@ -69,12 +69,12 @@ export default function SalesInvoicePage() {
       <FormField label="Status"><Select value={filters.status} onChange={e => setFilter('status', e.target.value)}><option value="">All statuses</option>{Object.entries(STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></FormField>
       <div className="flex items-end"><Button variant="secondary" onClick={() => { setFilters({ id: '', title: '', customerName: '', from: '', to: '', status: '', sortBy: 'updatedAt', sortDir: 'desc' }); setPage(1); }}>Clear Filters</Button></div>
     </div></Card>}
-    <Card><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b text-xs uppercase text-slate-500">{['Title', 'Status', 'Grand Total', 'Outstanding Amount', 'Paid Amount', 'ID', ...(showModified ? ['Last Modified'] : [])].map(label => <th key={label} className={padding}>{label}</th>)}</tr></thead><tbody>
-      {loading ? <tr><td colSpan={7} className="p-8 text-center text-slate-500">Loading invoices…</td></tr> : error ? <tr><td colSpan={7} className="p-8 text-center text-rose-700">{error}</td></tr> : !result?.data.length ? <tr><td colSpan={7} className="p-10 text-center"><p className="mb-3 text-slate-500">No sales invoices found.</p>{addButton}</td></tr> : result.data.map(sale => <tr key={sale.id} className="border-b border-slate-100 hover:bg-slate-50">
-        <td className={padding}><Link className="font-medium text-brand-700 hover:underline" to={`/receipt/${sale.id}`}>{sale.customerName}</Link>{sale.status === 'DRAFT' && !sale.quotation && canEdit && <Link className="ml-2 text-xs text-slate-500 underline" to={`/pos?edit=${sale.id}`}>Edit</Link>}</td>
-        <td className={padding}><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs ${sale.status === 'DRAFT' ? 'bg-amber-50 text-amber-700' : sale.status === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{STATUS[sale.status] || sale.status}</span></td>
-        <td className={`${padding} tabular-nums`}>{formatCurrency(sale.total)}</td><td className={`${padding} tabular-nums`}>{formatCurrency(sale.status === 'DRAFT' ? sale.balanceAdded : sale.status === 'CANCELLED' ? 0 : sale.outstanding)}</td><td className={`${padding} tabular-nums`}>{formatCurrency(sale.settledPaidAmount)}</td><td className={padding}><Link className="text-brand-700 hover:underline" to={`/receipt/${sale.id}`}>{sale.receiptNumber}</Link></td>{showModified && <td className={`${padding} text-xs text-slate-500`}>{formatDateTime(sale.updatedAt || sale.createdAt)}</td>}
+    <Card><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b text-xs uppercase text-neutral-500">{['Title', 'Status', 'Grand Total', 'Outstanding Amount', 'Paid Amount', 'ID', ...(showModified ? ['Last Modified'] : [])].map(label => <th key={label} className={padding}>{label}</th>)}</tr></thead><tbody>
+      {loading ? <tr><td colSpan={7} className="p-8 text-center text-neutral-500">Loading invoices…</td></tr> : error ? <tr><td colSpan={7} className="p-8 text-center text-brand-700">{error}</td></tr> : !result?.data.length ? <tr><td colSpan={7} className="p-10 text-center"><p className="mb-3 text-neutral-500">No sales invoices found.</p>{addButton}</td></tr> : result.data.map(sale => <tr key={sale.id} className="border-b border-neutral-100 hover:bg-neutral-50">
+        <td className={padding}><Link className="font-medium text-brand-700 hover:underline" to={`/receipt/${sale.id}`}>{sale.customerName}</Link>{sale.editedByName && <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title={sale.lockedBySuperAdmin ? 'Edited by the Super Admin' : 'Edited'}>Edited by {sale.editedByName}</span>}{canEditInvoice(user, sale) && canEdit && <Link className="ml-2 text-xs text-neutral-500 underline" to={`/pos?edit=${sale.id}`}>Edit</Link>}</td>
+        <td className={padding}><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs ${sale.status === 'DRAFT' ? 'bg-brand-50 text-brand-700' : sale.status === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-700' : 'bg-neutral-100 text-neutral-600'}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{STATUS[sale.status] || sale.status}</span></td>
+        <td className={`${padding} tabular-nums`}>{formatCurrency(sale.total)}</td><td className={`${padding} tabular-nums`}>{formatCurrency(sale.status === 'DRAFT' ? sale.balanceAdded : sale.status === 'CANCELLED' ? 0 : sale.outstanding)}</td><td className={`${padding} tabular-nums`}>{formatCurrency(sale.settledPaidAmount)}</td><td className={padding}><Link className="text-brand-700 hover:underline" to={`/receipt/${sale.id}`}>{sale.receiptNumber}</Link></td>{showModified && <td className={`${padding} text-xs text-neutral-500`}>{formatDateTime(sale.updatedAt || sale.createdAt)}</td>}
       </tr>)}
-    </tbody></table></div>{result && !error && <Pagination {...result.pagination} onChange={setPage} />}</Card>
+    </tbody></table></div></Card>
   </div>;
 }

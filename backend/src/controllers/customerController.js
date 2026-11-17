@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+import { userHas } from '../models/User.js';
 import Customer from '../models/Customer.js';
 import Account from '../models/Account.js';
 import { createHash } from 'node:crypto';
@@ -11,9 +13,10 @@ import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { toCents, fromCents } from '../utils/money.js';
 import { runInTransaction } from '../utils/transaction.js';
-import { applyWalletToDebt } from '../services/walletService.js';
+import { applyWalletToDebt, outstandingDebt, allocateDebt, OPENING_DEBT } from '../services/walletService.js';
 import { logAudit } from '../services/auditService.js';
 import { getCustomerItems } from '../services/customerItemsService.js';
+import { escapeRegex, NAME_ORDER, startsWith } from '../utils/regex.js';
 
 function toDTO(c) {
   return {
@@ -23,8 +26,10 @@ function toDTO(c) {
     email: c.email,
     address: c.address,
     notes: c.notes,
+    openingBalance: fromCents(c.openingBalanceCents || 0),
     balance: fromCents(c.balanceCents),
     walletBalance: fromCents(c.walletBalanceCents),
+    creditLimit: c.creditLimitCents == null ? null : fromCents(c.creditLimitCents),
     walletAutoPay: !!c.walletAutoPay,
     totalPurchased: fromCents(c.totalPurchasedCents),
     totalPaid: fromCents(c.totalPaidCents),
@@ -41,21 +46,24 @@ async function generatePaymentReceiptNumber(session) {
 
 // GET /api/customers?search=&page=&limit=
 export const listCustomers = asyncHandler(async (req, res) => {
-  const { search = '', page = 1, limit = 20 } = req.query;
-  const filter = {};
-  if (search.trim()) {
-    const norm = Customer.normalize(search);
+  const { page = 1, limit = 20 } = req.query;
+  const search = String(req.query.search ?? '').trim();
+  const filter = { archivedAt: null };
+  if (search) {
+    const norm = escapeRegex(Customer.normalize(search));
     filter.$or = [
-      { normalizedName: { $regex: norm, $options: 'i' } },
-      { phone: { $regex: search.trim(), $options: 'i' } },
+      { normalizedName: startsWith(norm) },
+      { phone: { $regex: escapeRegex(search), $options: 'i' } },
     ];
   }
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 20));
 
+  // A to Z, upper and lower case alike.
   const [items, total] = await Promise.all([
     Customer.find(filter)
-      .sort({ createdAt: -1 })
+      .collation(NAME_ORDER)
+      .sort({ name: 1, _id: 1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
     Customer.countDocuments(filter),
@@ -70,15 +78,17 @@ export const listCustomers = asyncHandler(async (req, res) => {
 
 // GET /api/customers/search?q=Ahmed  -- fast lightweight search used by POS
 export const searchCustomers = asyncHandler(async (req, res) => {
-  const q = (req.query.q || '').trim();
+  const q = String(req.query.q ?? '').trim();
   if (!q) return res.json({ success: true, data: [] });
 
-  const norm = Customer.normalize(q);
+  const norm = escapeRegex(Customer.normalize(q));
   const customers = await Customer.find({
-    $or: [{ normalizedName: { $regex: norm, $options: 'i' } }, { phone: { $regex: q, $options: 'i' } }],
+    archivedAt: null,
+    $or: [{ normalizedName: startsWith(norm) }, { phone: { $regex: escapeRegex(q), $options: 'i' } }],
   })
-    .sort({ name: 1 })
-    .limit(10);
+    // Every match, A to Z -- not the first few.
+    .collation(NAME_ORDER)
+    .sort({ name: 1 });
 
   res.json({ success: true, data: customers.map(toDTO) });
 });
@@ -90,16 +100,27 @@ export const getCustomer = asyncHandler(async (req, res) => {
 });
 
 export const createCustomer = asyncHandler(async (req, res) => {
-  const { name, phone = '', email = '', address = '', openingBalance = 0, notes = '' } = req.body;
-  if (!name || !name.trim()) throw new ApiError(400, 'Customer name is required.');
+  // Plain text only: a number or a list sent by mistake is read as text, never
+  // crashes the request.
+  const text = (value) => String(value ?? '').trim();
+  const name = text(req.body.name);
+  if (!name) throw new ApiError(400, 'Customer name is required.');
 
-  const openingBalanceCents = toCents(openingBalance);
+  // What the customer owed before the system: 0 or more, a real amount (the
+  // same rule as editing it later and as the customers sheet).
+  const { openingBalance } = req.body;
+  const opening = openingBalance === '' || openingBalance == null ? 0 : Number(openingBalance);
+  if (!Number.isFinite(opening) || opening < 0 || !Number.isSafeInteger(toCents(opening))) {
+    throw new ApiError(400, 'The opening balance must be 0 or more.');
+  }
+
+  const openingBalanceCents = toCents(opening);
   const customer = await Customer.create({
-    name: name.trim(),
-    phone: phone.trim(),
-    email: email.trim(),
-    address: address.trim(),
-    notes,
+    name,
+    phone: text(req.body.phone),
+    email: text(req.body.email),
+    address: text(req.body.address),
+    notes: String(req.body.notes ?? ''),
     openingBalanceCents,
     balanceCents: openingBalanceCents,
   });
@@ -127,19 +148,138 @@ export const createCustomer = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: toDTO(customer) });
 });
 
+// GET /api/customers/sheet -- every customer as a sheet row (name, phone,
+// opening balance), so the Customers sheet can show and edit them all at once.
+export const getCustomersSheet = asyncHandler(async (req, res) => {
+  const list = await Customer.find({ archivedAt: null }).collation(NAME_ORDER).sort({ name: 1 }).select('name phone openingBalanceCents balanceCents creditLimitCents').lean();
+  res.json({ success: true, data: list.map((c) => ({ id: c._id, name: c.name, phone: c.phone || '', openingBalance: fromCents(c.openingBalanceCents || 0), creditLimit: c.creditLimitCents == null ? null : fromCents(c.creditLimitCents), owed: fromCents(c.balanceCents || 0) })) });
+});
+
+// Opening balance change for one customer inside the caller's transaction:
+// the debt moves by the same amount and the ledger records it. It cannot go
+// below what they have already paid off (their debt would turn negative).
+async function setOpeningBalance(c, newCents, user, session) {
+  const old = c.openingBalanceCents;
+  const diff = newCents - old;
+  if (!diff) return false;
+  const after = c.balanceCents + diff;
+  if (after < 0) throw new ApiError(400, `${c.name} has already paid more than that: the opening balance can be at least ${fromCents(old - c.balanceCents).toFixed(2)}.`);
+  await new CustomerLedger({ customer: c._id, type: 'ADJUSTMENT', amountCents: diff, description: `Opening balance changed from ${fromCents(old).toFixed(2)} to ${fromCents(newCents).toFixed(2)}`, balanceBeforeCents: c.balanceCents, balanceAfterCents: after, createdBy: user?._id }).save({ session });
+  c.openingBalanceCents = newCents;
+  c.balanceCents = after;
+  return true;
+}
+
+// The Customers sheet: new customers (no id) are added, existing ones (id)
+// get the name, phone and opening balance typed in. All or nothing. Names
+// must stay unique across the sheet and every other customer. A new row sent
+// again because the answer to the first send was lost (same importKey) is
+// skipped, so no one is added twice; sending an edit again changes nothing.
+export const createCustomersBulk = asyncHandler(async (req, res) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || !rows.length || rows.length > 500) throw new ApiError(400, 'Send between 1 and 500 customers at a time.');
+  const clean = rows.map((r, i) => {
+    const name = String(r?.name || '').trim().replace(/\s+/g, ' ');
+    if (!name) throw new ApiError(400, `Row ${i + 1}: enter the customer's name.`);
+    if (name.length > 200) throw new ApiError(400, `Row ${i + 1}: the name is too long.`);
+    const phone = String(r.phone || '').trim();
+    if (phone.length > 50) throw new ApiError(400, `Row ${i + 1}: the phone number is too long.`);
+    const opening = r.openingBalance === '' || r.openingBalance == null ? 0 : Number(r.openingBalance);
+    if (!Number.isFinite(opening) || opening < 0 || !Number.isSafeInteger(toCents(opening))) throw new ApiError(400, `Row ${i + 1} (${name}): the opening balance must be 0 or more.`);
+    if (r.key !== undefined && (typeof r.key !== 'string' || r.key.length > 64)) throw new ApiError(400, `Row ${i + 1}: invalid row key.`);
+    if (r.id != null && !mongoose.isValidObjectId(r.id)) throw new ApiError(400, `Row ${i + 1}: invalid customer.`);
+    // Credit limit: not sent = unchanged; blank = no limit; a number = the limit.
+    let creditLimitCents;
+    if (r.creditLimit !== undefined) {
+      if (r.creditLimit === null || r.creditLimit === '') creditLimitCents = null;
+      else {
+        const n = Number(r.creditLimit);
+        if (!Number.isFinite(n) || n < 0 || !Number.isSafeInteger(toCents(n))) throw new ApiError(400, `Row ${i + 1} (${name}): the credit limit must be 0 or more.`);
+        creditLimitCents = toCents(n);
+      }
+    }
+    return { row: i + 1, id: r.id ? String(r.id) : null, key: r.key || null, name, normalized: Customer.normalize(name), phone, openingBalanceCents: toCents(opening), creditLimitCents };
+  });
+
+  const done = new Set(
+    (await Customer.find({ importKey: { $in: clean.filter((c) => !c.id).map((c) => c.key).filter(Boolean) } }).select('importKey')).map((c) => c.importKey)
+  );
+  const fresh = clean.filter((c) => c.id || !c.key || !done.has(c.key));
+  const edits = fresh.filter((c) => c.id);
+  const adds = fresh.filter((c) => !c.id);
+  if (adds.length && !userHas(req.user, 'createCustomers')) throw new ApiError(403, 'You do not have permission to add new customers.');
+  const canSetLimits = userHas(req.user, 'creditLimits');
+
+  const result = await runInTransaction(async (session) => {
+    let updated = 0;
+    const editing = new Set(edits.map((c) => c.id));
+    const existing = new Map((await Customer.find({ _id: { $in: [...editing] } }).session(session)).map((c) => [String(c._id), c]));
+    const renaming = edits.filter((c) => {
+      const customer = existing.get(c.id);
+      if (!customer) throw new ApiError(404, `Row ${c.row}: this customer no longer exists.`);
+      return customer.normalizedName !== c.normalized;
+    });
+    const identityChanges = [...renaming, ...adds];
+    const inSheet = new Map();
+    for (const c of identityChanges) {
+      if (inSheet.has(c.normalized)) throw new ApiError(400, `Rows ${inSheet.get(c.normalized)} and ${c.row} are both "${c.name}". Keep one.`);
+      inSheet.set(c.normalized, c.row);
+    }
+    if (inSheet.size) {
+      const changingIds = renaming.map((c) => c.id);
+      const taken = await Customer.find({
+        archivedAt: null,
+        normalizedName: { $in: [...inSheet.keys()] },
+        _id: { $nin: changingIds },
+      }).select('name').session(session);
+      if (taken.length) {
+        const names = taken.slice(0, 5).map((t) => `"${t.name}"`).join(', ');
+        throw new ApiError(409, `Already a customer: ${names}${taken.length > 5 ? ` and ${taken.length - 5} more` : ''}. Use a different name, or edit that customer's own row.`);
+      }
+    }
+    for (const c of edits) {
+      const customer = existing.get(c.id);
+      const moneyChange = customer.openingBalanceCents !== c.openingBalanceCents;
+      if (moneyChange && !userHas(req.user, 'changeOpeningDebt')) throw new ApiError(403, `Row ${c.row} (${customer.name}): changing an opening balance needs the "Change opening debt" permission.`);
+      const limitChange = c.creditLimitCents !== undefined && (customer.creditLimitCents ?? null) !== c.creditLimitCents;
+      // Like the credit limit window: admins only.
+      if (limitChange && !canSetLimits) throw new ApiError(403, `Row ${c.row} (${customer.name}): setting credit limits needs the Credit limits permission.`);
+      const changed = customer.name !== c.name || customer.phone !== c.phone || moneyChange || limitChange;
+      if (!changed) continue;
+      customer.name = c.name;
+      customer.phone = c.phone;
+      if (limitChange) customer.creditLimitCents = c.creditLimitCents;
+      await setOpeningBalance(customer, c.openingBalanceCents, req.user, session);
+      await customer.save({ session });
+      updated += 1;
+    }
+    for (const c of adds) {
+      const customer = await new Customer({ name: c.name, phone: c.phone, openingBalanceCents: c.openingBalanceCents, balanceCents: c.openingBalanceCents, importKey: c.key || undefined, ...(c.creditLimitCents != null && canSetLimits ? { creditLimitCents: c.creditLimitCents } : {}) }).save({ session });
+      if (c.openingBalanceCents > 0) {
+        await new CustomerLedger({ customer: customer._id, type: 'ADJUSTMENT', amountCents: c.openingBalanceCents, description: 'Opening balance', balanceBeforeCents: 0, balanceAfterCents: c.openingBalanceCents, createdBy: req.user?._id }).save({ session });
+      }
+    }
+    return { updated };
+  });
+
+  if (fresh.length) await logAudit({ user: req.user, action: 'customer.bulk_save', entityType: 'Customer', details: { created: adds.length, updated: result.updated } });
+  res.status(201).json({ success: true, data: { created: adds.length, updated: result.updated, skipped: clean.length - fresh.length } });
+});
+
 export const updateCustomer = asyncHandler(async (req, res) => {
   const customer = await Customer.findById(req.params.id);
   if (!customer) throw new ApiError(404, 'Customer not found.');
 
   const { name, phone, email, address, notes } = req.body;
+  const text = (value) => String(value ?? '').trim();
   if (name !== undefined) {
-    if (!name.trim()) throw new ApiError(400, 'Customer name cannot be empty.');
-    customer.name = name.trim();
+    if (!text(name)) throw new ApiError(400, 'Customer name cannot be empty.');
+    customer.name = text(name);
   }
-  if (phone !== undefined) customer.phone = phone.trim();
-  if (email !== undefined) customer.email = email.trim();
-  if (address !== undefined) customer.address = address.trim();
-  if (notes !== undefined) customer.notes = notes;
+  if (phone !== undefined) customer.phone = text(phone);
+  if (email !== undefined) customer.email = text(email);
+  if (address !== undefined) customer.address = text(address);
+  if (notes !== undefined) customer.notes = String(notes ?? '');
 
   await customer.save();
 
@@ -154,29 +294,105 @@ export const updateCustomer = asyncHandler(async (req, res) => {
   res.json({ success: true, data: toDTO(customer) });
 });
 
+// PUT /api/customers/:id/opening-balance { openingBalance } -- corrects what
+// the customer owed before the system. The debt moves by the same amount and
+// the change is written to the ledger, so the statement stays right. It can't
+// go below what they have already paid off (their debt would turn negative).
+export const updateCustomerOpeningBalance = asyncHandler(async (req, res) => {
+  const raw = req.body.openingBalance;
+  if (raw === '' || raw == null || !Number.isFinite(Number(raw)) || Number(raw) < 0) throw new ApiError(400, 'The opening balance must be 0 or more.');
+  const newCents = toCents(raw);
+  const { customer, oldCents } = await runInTransaction(async (session) => {
+    const c = await Customer.findById(req.params.id).session(session);
+    if (!c) throw new ApiError(404, 'Customer not found.');
+    const old = c.openingBalanceCents;
+    if (await setOpeningBalance(c, newCents, req.user, session)) await c.save({ session });
+    return { customer: c, oldCents: old };
+  });
+  if (oldCents !== newCents) {
+    await logAudit({ user: req.user, action: 'customer.opening_balance', entityType: 'Customer', entityId: customer._id, details: { from: fromCents(oldCents), to: fromCents(newCents) } });
+  }
+  res.json({ success: true, data: toDTO(customer) });
+});
+
+// GET /api/customers/credit-limits -- every customer's name, limit and debt
+// for the Credit limits sheet.
+export const getCreditLimitsSheet = asyncHandler(async (req, res) => {
+  const list = await Customer.find({ archivedAt: null }).collation(NAME_ORDER).sort({ name: 1 }).select('name creditLimitCents balanceCents').lean();
+  res.json({ success: true, data: list.map((c) => ({ id: c._id, name: c.name, creditLimit: c.creditLimitCents == null ? null : fromCents(c.creditLimitCents), owed: fromCents(c.balanceCents || 0) })) });
+});
+
+// POST /api/customers/credit-limits { rows: [{ id, creditLimit }] } -- the
+// Credit limits sheet: many customers' limits in one save (null = no limit,
+// 0 = nothing on credit). All or nothing. The Credit limits permission.
+export const setCreditLimitsBulk = asyncHandler(async (req, res) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || !rows.length || rows.length > 2000) throw new ApiError(400, 'Send between 1 and 2000 customers at a time.');
+  const clean = rows.map((r, i) => {
+    if (!r || !mongoose.isValidObjectId(r.id)) throw new ApiError(400, `Row ${i + 1}: unknown customer.`);
+    if (r.creditLimit === null || r.creditLimit === '' || r.creditLimit === undefined) return { id: String(r.id), cents: null, row: i + 1 };
+    const n = Number(r.creditLimit);
+    if (!Number.isFinite(n) || n < 0 || !Number.isSafeInteger(toCents(n))) throw new ApiError(400, `Row ${i + 1}: the credit limit must be 0 or more.`);
+    return { id: String(r.id), cents: toCents(n), row: i + 1 };
+  });
+  const updated = await runInTransaction(async (session) => {
+    const found = new Map((await Customer.find({ _id: { $in: clean.map((c) => c.id) } }).session(session)).map((c) => [String(c._id), c]));
+    let n = 0;
+    for (const c of clean) {
+      const customer = found.get(c.id);
+      if (!customer) throw new ApiError(404, `Row ${c.row}: this customer no longer exists.`);
+      if ((customer.creditLimitCents ?? null) === c.cents) continue;
+      customer.creditLimitCents = c.cents;
+      await customer.save({ session });
+      n += 1;
+    }
+    return n;
+  });
+  await logAudit({ user: req.user, action: 'customer.credit_limits_bulk', entityType: 'Customer', details: { updated } });
+  res.status(201).json({ success: true, data: { updated } });
+});
+
+// PUT /api/customers/:id/credit-limit { limit } -- admin only. limit null or
+// '' removes it; 0 means nothing on credit at all.
+export const setCreditLimit = asyncHandler(async (req, res) => {
+  const customer = await Customer.findById(req.params.id);
+  if (!customer) throw new ApiError(404, 'Customer not found.');
+  const raw = req.body.limit;
+  let cents = null;
+  if (raw !== null && raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || !Number.isSafeInteger(toCents(n))) throw new ApiError(400, 'Enter a valid credit limit.');
+    cents = toCents(n);
+  }
+  const before = customer.creditLimitCents;
+  customer.creditLimitCents = cents;
+  await customer.save();
+  await logAudit({
+    user: req.user,
+    action: 'customer.credit_limit',
+    entityType: 'Customer',
+    entityId: customer._id,
+    details: { before: before == null ? null : fromCents(before), after: cents == null ? null : fromCents(cents) },
+  });
+  res.json({ success: true, data: toDTO(customer) });
+});
+
 export const deleteCustomer = asyncHandler(async (req, res) => {
   const customer = await Customer.findById(req.params.id);
   if (!customer) throw new ApiError(404, 'Customer not found.');
-
-  const saleCount = await Sale.countDocuments({ customer: customer._id, status: 'CONFIRMED' });
-  if (saleCount > 0) {
-    throw new ApiError(
-      409,
-      'This customer has sales history and cannot be deleted. Consider editing their details instead.'
-    );
-  }
-
-  await customer.deleteOne();
+  if (customer.archivedAt) throw new ApiError(404, 'Customer not found.');
+  customer.archivedAt = new Date();
+  await customer.save();
 
   await logAudit({
     user: req.user,
-    action: 'customer.delete',
+    action: 'customer.archive',
     entityType: 'Customer',
     entityId: customer._id,
-    details: { name: customer.name },
+    details: { name: customer.name, balance: fromCents(customer.balanceCents), walletBalance: fromCents(customer.walletBalanceCents) },
   });
 
-  res.json({ success: true, data: { id: req.params.id } });
+  res.json({ success: true, data: { id: req.params.id, archivedAt: customer.archivedAt } });
 });
 
 // GET /api/customers/:id/history  -- full transaction history + ledger timeline
@@ -210,6 +426,9 @@ export const getCustomerHistory = asyncHandler(async (req, res) => {
       customer: toDTO(customer),
       walletPaid: fromCents(walletUsed?.cents || 0),
       sales: sales.map((s) => ({
+        editedByName: s.editedByName || '',
+        lockedBySuperAdmin: !!s.lockedBySuperAdmin,
+        lockedByAdmin: !!s.lockedByAdmin,
         id: s._id,
         receiptNumber: s.receiptNumber,
         status: s.status,
@@ -278,25 +497,28 @@ export const getCustomerDebt = asyncHandler(async (req, res) => {
   const customer = await Customer.findById(req.params.id);
   if (!customer) throw new ApiError(404, 'Customer not found.');
 
-  const invoices = await Sale.find({ customer: customer._id, status: 'CONFIRMED', outstandingCents: { $gt: 0 } })
-    .sort({ createdAt: 1 })
-    .select('receiptNumber totalCents paidAmountCents outstandingCents createdAt');
-
-  const totalOutstandingCents = invoices.reduce((sum, i) => sum + i.outstandingCents, 0);
+  const { invoices, openingCents, totalCents: totalOutstandingCents } = await outstandingDebt(customer);
 
   res.json({
     success: true,
     data: {
       customer: toDTO(customer),
       totalOutstanding: fromCents(totalOutstandingCents),
-      invoices: invoices.map((i) => ({
-        id: i._id,
-        receiptNumber: i.receiptNumber,
-        total: fromCents(i.totalCents),
-        paidAtSale: fromCents(i.paidAmountCents),
-        outstanding: fromCents(i.outstandingCents),
-        createdAt: i.createdAt,
-      })),
+      // The opening balance comes first, as a line of its own (id 'opening').
+      invoices: [
+        ...(openingCents > 0
+          // Total is the opening balance as set (300), paid what has come off it (100).
+          ? [{ id: 'opening', receiptNumber: OPENING_DEBT, total: fromCents(Math.max(openingCents, customer.openingBalanceCents || 0)), paidAtSale: fromCents(Math.max(0, (customer.openingBalanceCents || 0) - openingCents)), outstanding: fromCents(openingCents), createdAt: customer.createdAt }]
+          : []),
+        ...invoices.map((i) => ({
+          id: i._id,
+          receiptNumber: i.receiptNumber,
+          total: fromCents(i.totalCents),
+          paidAtSale: fromCents(i.paidAmountCents),
+          outstanding: fromCents(i.outstandingCents),
+          createdAt: i.createdAt,
+        })),
+      ],
     },
   });
 });
@@ -326,15 +548,8 @@ export const payCustomerDebt = asyncHandler(async (req, res) => {
     const account = await Account.findById(req.body.paymentAccountId).session(session);
     if (!account?.isActive) throw new ApiError(400, 'Selected payment account is not available.');
 
-    const outstandingInvoices = await Sale.find({
-      customer: customer._id,
-      status: 'CONFIRMED',
-      outstandingCents: { $gt: 0 },
-    })
-      .sort({ createdAt: 1 })
-      .session(session);
-
-    const totalOutstandingCents = outstandingInvoices.reduce((sum, s) => sum + s.outstandingCents, 0);
+    const debt = await outstandingDebt(customer, session);
+    const { invoices: outstandingInvoices, totalCents: totalOutstandingCents } = debt;
     if (totalOutstandingCents <= 0) {
       throw new ApiError(409, 'This customer has no outstanding debt to pay.');
     }
@@ -351,7 +566,18 @@ export const payCustomerDebt = asyncHandler(async (req, res) => {
     if (requestedAllocations) {
       // Manual allocation: pay specific invoices by id.
       const bySaleId = new Map(outstandingInvoices.map((s) => [s._id.toString(), s]));
+      let openingLeft = debt.openingCents;
       for (const a of requestedAllocations) {
+        if (String(a.saleId) === 'opening') {
+          if (!Number.isFinite(Number(a.amount)) || Number(a.amount) < 0 || !Number.isSafeInteger(toCents(a.amount))) throw new ApiError(400, 'Invalid opening balance amount.');
+          const allocCents = toCents(a.amount);
+          if (allocCents <= 0) continue;
+          if (allocCents > openingLeft) throw new ApiError(400, 'The amount for the opening balance is more than is owed on it.');
+          openingLeft -= allocCents;
+          allocations.push({ sale: null, receiptNumber: OPENING_DEBT, amountCents: allocCents });
+          remaining -= allocCents;
+          continue;
+        }
         const sale = bySaleId.get(String(a.saleId));
         if (!sale) throw new ApiError(400, 'One of the selected invoices is no longer outstanding.');
         if (!Number.isFinite(Number(a.amount)) || Number(a.amount) < 0 || !Number.isSafeInteger(toCents(a.amount))) throw new ApiError(400, 'Invalid invoice allocation amount.');
@@ -369,15 +595,9 @@ export const payCustomerDebt = asyncHandler(async (req, res) => {
         throw new ApiError(400, 'Allocated amounts must add up exactly to the payment amount.');
       }
     } else {
-      // Automatic allocation: oldest invoice first.
-      for (const sale of outstandingInvoices) {
-        if (remaining <= 0) break;
-        const take = Math.min(sale.outstandingCents, remaining);
-        sale.outstandingCents -= take;
-        await sale.save({ session });
-        allocations.push({ sale: sale._id, receiptNumber: sale.receiptNumber, amountCents: take });
-        remaining -= take;
-      }
+      // Automatic allocation: the opening balance, then the oldest invoice first.
+      allocations.push(...(await allocateDebt(debt, amountCents, session)));
+      remaining = 0;
     }
 
     const previousBalanceCents = customer.balanceCents;
@@ -475,7 +695,7 @@ function walletTxnToDTO(t) {
 // pointing at this deposit's own AccountTransaction for traceability.
 export const depositToWallet = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, 'Enter a valid deposit amount.');
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Enter a valid deposit amount.');
   if (!req.body.paymentAccountId) throw new ApiError(400, 'Please select an account for this deposit.');
   const amountCents = toCents(amount);
   const reference = String(req.body.reference || '').trim().slice(0, 100);
@@ -509,27 +729,14 @@ export const depositToWallet = asyncHandler(async (req, res) => {
     // automatically. Otherwise all of it stays in the wallet.
     const applyToDebt = req.body.applyToDebt == null ? !!customer.walletAutoPay : req.body.applyToDebt === true || req.body.applyToDebt === 'true';
     if (applyToDebt && customer.balanceCents > 0) {
-      const outstandingInvoices = await Sale.find({ customer: customer._id, status: 'CONFIRMED', outstandingCents: { $gt: 0 } })
-        .sort({ createdAt: 1 })
-        .session(session);
-      // Normally equal to customer.balanceCents; capped independently in
-      // case they have ever drifted, so balanceCents can never go negative
-      // and never outpaces what invoices actually still owe.
-      const totalOutstandingCents = outstandingInvoices.reduce((sum, s) => sum + s.outstandingCents, 0);
-      const debtPortionCents = Math.min(remainingCents, customer.balanceCents, totalOutstandingCents);
+      // The invoices plus the opening balance, capped by balanceCents so it
+      // can never go negative.
+      const debt = await outstandingDebt(customer, session);
+      const debtPortionCents = Math.min(remainingCents, customer.balanceCents, debt.totalCents);
 
       if (debtPortionCents > 0) {
-        const allocations = [];
-        let toAllocate = debtPortionCents;
-        for (const sale of outstandingInvoices) {
-          if (toAllocate <= 0) break;
-          const take = Math.min(sale.outstandingCents, toAllocate);
-          sale.outstandingCents -= take;
-          await sale.save({ session });
-          allocations.push({ sale: sale._id, receiptNumber: sale.receiptNumber, amountCents: take });
-          toAllocate -= take;
-        }
-        debtClearedCents = debtPortionCents - toAllocate; // actually allocated, in case of a drift
+        const allocations = await allocateDebt(debt, debtPortionCents, session);
+        debtClearedCents = allocations.reduce((sum, a) => sum + a.amountCents, 0);
         remainingCents -= debtClearedCents;
 
         const previousBalanceCents = customer.balanceCents;
@@ -629,9 +836,50 @@ export const depositToWallet = asyncHandler(async (req, res) => {
 // POST /api/customers/:id/wallet/withdraw -- the customer takes money back
 // out of their wallet: it leaves the chosen Account, and the number/account
 // it was sent to is recorded. Never more than the wallet holds.
+export const editWalletBalance = asyncHandler(async (req, res) => {
+  const balance = Number(req.body.balance);
+  if (!Number.isFinite(balance) || balance < 0 || !Number.isSafeInteger(toCents(balance))) throw new ApiError(400, 'Enter a valid balance (0 or more).');
+  const newCents = toCents(balance);
+  const note = String(req.body.note || '').trim().slice(0, 500);
+
+  const result = await runInTransaction(async (session) => {
+    const customer = await Customer.findById(req.params.id).session(session);
+    if (!customer) throw new ApiError(404, 'Customer not found.');
+    const before = customer.walletBalanceCents || 0;
+    const diff = newCents - before;
+    if (diff === 0) throw new ApiError(400, 'The wallet already holds this amount.');
+    customer.walletBalanceCents = newCents;
+    const [walletTxn] = await CustomerWalletTransaction.create(
+      [
+        {
+          customer: customer._id,
+          type: 'ADJUSTMENT',
+          amountCents: diff,
+          note: note || `Wallet edited from ${fromCents(before).toFixed(2)} to ${fromCents(newCents).toFixed(2)}`,
+          balanceBeforeCents: before,
+          balanceAfterCents: newCents,
+          createdBy: req.user?._id,
+        },
+      ],
+      { session }
+    );
+    await customer.save({ session });
+    return { customer, walletTxn, before };
+  });
+
+  await logAudit({
+    user: req.user,
+    action: 'customer.wallet.edit',
+    entityType: 'Customer',
+    entityId: result.customer._id,
+    details: { from: fromCents(result.before), to: balance, note },
+  });
+  res.json({ success: true, data: { customer: toDTO(result.customer), transaction: walletTxnToDTO(result.walletTxn) } });
+});
+
 export const withdrawFromWallet = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, 'Enter a valid amount.');
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Enter a valid amount.');
   if (!req.body.paymentAccountId) throw new ApiError(400, 'Select the account the money is paid from.');
   const amountCents = toCents(amount);
   const reference = String(req.body.reference || '').trim().slice(0, 100);
@@ -760,6 +1008,25 @@ export const getWalletHistory = asyncHandler(async (req, res) => {
 // ledger. Draft invoices are deliberately excluded from the finalized
 // totals/ledger and returned separately as "pendingToday" so they are never
 // mistaken for posted debt/revenue.
+// A customer's confirmed invoices that were cancelled later, and the money
+// paid on each one (at the sale and by debt payments) -- shared by the normal
+// statement (which leaves them out) and the Cancelled Invoices statement.
+async function cancelledPicture(customerId, payments, from, to) {
+  const range = from || to ? { createdAt: { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } } : {};
+  const all = await Sale.find({ customer: customerId, status: 'CANCELLED', confirmedAt: { $ne: null }, ...range }).sort({ createdAt: 1 });
+  const ids = new Set(all.map((x) => String(x._id)));
+  const paidOn = new Map(); // saleId -> [{ payment, cents }]
+  const onCancelledCents = new Map(); // paymentId -> cents of it that paid cancelled invoices
+  for (const p of payments) {
+    const parts = p.type === 'sale' && p.relatedSale ? [[String(p.relatedSale), p.amountCents]] : (p.allocations || []).map((al) => [String(al.sale), al.amountCents]);
+    for (const [saleId, cents] of parts) {
+      if (!ids.has(saleId)) continue;
+      paidOn.set(saleId, [...(paidOn.get(saleId) || []), { payment: p, cents }]);
+      onCancelledCents.set(String(p._id), (onCancelledCents.get(String(p._id)) || 0) + cents);
+    }
+  }
+  return { sales: all, paidOn, onCancelledCents };
+}
 export const getCustomerStatement = asyncHandler(async (req, res) => {
   const customer = await Customer.findById(req.params.id);
   if (!customer) throw new ApiError(404, 'Customer not found.');
@@ -768,36 +1035,68 @@ export const getCustomerStatement = asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   if (req.query.to && req.query.to.length <= 10) to.setHours(23, 59, 59, 999);
 
-  const [sales, payments, todaysDrafts] = await Promise.all([
+  const [sales, allPayments, todaysDrafts, adjustments, before, anyAdjustment] = await Promise.all([
     Sale.find({ customer: customer._id, status: 'CONFIRMED', createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }),
     Payment.find({ customer: customer._id, status: { $ne: 'CANCELLED' }, createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }),
     Sale.find({ customer: customer._id, status: 'DRAFT' }).sort({ createdAt: -1 }),
+    // The opening balance (and any later change to it), each on its own line.
+    // Opening balance changes and loans only: an adjustment tied to an invoice
+    // (an edited invoice's old version, an invoice moved between customers)
+    // is already in that invoice's own line at its final amount.
+    CustomerLedger.find({ customer: customer._id, type: { $in: ['ADJUSTMENT', 'LOAN'] }, sale: null, createdAt: { $gte: from, $lte: to } }).sort({ createdAt: 1 }),
+    // What was owed when the period starts.
+    CustomerLedger.findOne({ customer: customer._id, createdAt: { $lt: from } }).sort({ createdAt: -1, _id: -1 }),
+    CustomerLedger.exists({ customer: customer._id, type: 'ADJUSTMENT', sale: null }),
   ]);
+  // Cancelled invoices have their own statement, so money paid on them is
+  // left out here too (it went to the wallet or was given back). A debt
+  // payment keeps only the part that paid invoices still standing.
+  const { onCancelledCents } = await cancelledPicture(customer._id, allPayments);
+  const payments = allPayments
+    .map((p) => ({ p, cents: p.amountCents - (onCancelledCents.get(String(p._id)) || 0) }))
+    .filter((x) => x.cents > 0);
 
   // Merge into one chronological, double-entry ledger: a confirmed sale is a
   // debit (increases what the customer owes), a payment is a credit.
   const entries = [
-    ...sales.map((s) => ({
-      date: s.createdAt,
-      reference: s.receiptNumber,
+    ...sales.map((x) => ({
+      date: x.createdAt,
+      reference: x.receiptNumber,
       type: 'SALE',
-      description: `Sale invoice ${s.receiptNumber}`,
-      debitCents: s.totalCents,
+      description: `Sale invoice ${x.receiptNumber}`,
+      debitCents: x.totalCents,
       creditCents: 0,
-      saleId: s._id,
+      saleId: x._id,
     })),
-    ...payments.map((p) => ({
+    ...payments.map(({ p, cents }) => ({
       date: p.createdAt,
       reference: p.receiptNumber,
       type: p.type === 'sale' ? 'SALE_PAYMENT' : 'PAYMENT',
       description: p.type === 'sale' ? `Payment received at sale (${p.receiptNumber})` : `Debt payment ${p.receiptNumber}`,
       debitCents: 0,
-      creditCents: p.amountCents,
+      creditCents: cents,
       paymentId: p._id,
     })),
-  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+    ...adjustments.map((a) => ({
+      date: a.createdAt,
+      reference: a.type === 'LOAN' ? a.reference : 'Opening balance',
+      type: a.type === 'LOAN' ? 'LOAN' : 'OPENING',
+      loanId: a.type === 'LOAN' && a.amountCents > 0 && !a.cancelledAt ? a._id : null,
+      description: a.description,
+      debitCents: Math.max(0, a.amountCents),
+      creditCents: Math.max(0, -a.amountCents),
+    })),
+  ];
+  // A customer from before opening balances were recorded as their own line:
+  // the opening balance is shown on the day they were added.
+  let startCents = before ? before.balanceAfterCents : 0;
+  if (!anyAdjustment && customer.openingBalanceCents) {
+    if (new Date(customer.createdAt) >= from) entries.push({ date: customer.createdAt, reference: 'Opening balance', type: 'OPENING', description: 'Opening balance', debitCents: customer.openingBalanceCents, creditCents: 0 });
+    else if (!before) startCents = customer.openingBalanceCents;
+  }
+  entries.sort((a, b) => new Date(a.date) - new Date(b.date) || (a.type === 'OPENING' ? -1 : b.type === 'OPENING' ? 1 : 0));
 
-  let runningBalanceCents = customer.openingBalanceCents;
+  let runningBalanceCents = startCents;
   const ledger = entries.map((e) => {
     runningBalanceCents += e.debitCents - e.creditCents;
     return {
@@ -808,11 +1107,16 @@ export const getCustomerStatement = asyncHandler(async (req, res) => {
       debit: fromCents(e.debitCents),
       credit: fromCents(e.creditCents),
       runningBalance: fromCents(runningBalanceCents),
+      saleId: e.saleId || null,
+      paymentId: e.paymentId || null,
+      loanId: e.loanId || null,
     };
   });
+  // What was owed before the period starts, as the first line.
+  if (startCents) ledger.unshift({ date: from, reference: 'Brought forward', type: 'BROUGHT_FORWARD', description: 'Balance brought forward', debit: 0, credit: 0, runningBalance: fromCents(startCents), saleId: null, paymentId: null });
 
   const totalAmountPurchasedCents = sales.reduce((sum, s) => sum + s.totalCents, 0);
-  const totalPaymentsCents = payments.reduce((sum, p) => sum + p.amountCents, 0);
+  const totalPaymentsCents = payments.reduce((sum, x) => sum + x.cents, 0);
   const totalCreditGeneratedCents = sales.reduce((sum, s) => sum + s.balanceAddedCents, 0);
 
   res.json({
@@ -825,6 +1129,7 @@ export const getCustomerStatement = asyncHandler(async (req, res) => {
         totalConfirmedPurchases: sales.length,
         totalAmountPurchased: fromCents(totalAmountPurchasedCents),
         totalPayments: fromCents(totalPaymentsCents),
+        openingBalance: fromCents(adjustments.filter((a) => a.type === 'ADJUSTMENT').reduce((s, a) => s + a.amountCents, 0) + (!anyAdjustment && new Date(customer.createdAt) >= from ? customer.openingBalanceCents : 0)),
         totalCreditGenerated: fromCents(totalCreditGeneratedCents),
         currentOutstandingBalance: fromCents(customer.balanceCents),
         numberOfFinalizedInvoices: sales.length,
@@ -857,7 +1162,7 @@ export { toDTO as customerToDTO };
 // up to `amount`.
 export const payDebtFromWallet = asyncHandler(async (req, res) => {
   const amount = req.body.amount == null || req.body.amount === '' ? null : Number(req.body.amount);
-  if (amount !== null && (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)))) throw new ApiError(400, 'Enter a valid amount.');
+  if (amount !== null && (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0)) throw new ApiError(400, 'Enter a valid amount.');
   const result = await runInTransaction(async (session) => {
     const customer = await Customer.findById(req.params.id).session(session);
     if (!customer) throw new ApiError(404, 'Customer not found.');
@@ -905,6 +1210,7 @@ export const cancelCustomerPayment = asyncHandler(async (req, res) => {
 
     // The debt comes back on the same invoices.
     for (const a of payment.allocations) {
+      if (!a.sale) continue; // the opening balance: owed again through balanceCents below
       const sale = await Sale.findById(a.sale).session(session);
       if (!sale || sale.status !== 'CONFIRMED') {
         throw new ApiError(409, `Invoice ${a.receiptNumber} was cancelled after this payment, so the payment cannot be undone.`);
@@ -1023,5 +1329,62 @@ export const listDebtors = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: { customers: rows, totalOwed: fromCents(customers.reduce((s, c) => s + c.balanceCents, 0)), count: rows.length, asOf: new Date() },
+  });
+});
+
+// GET /api/customers/:id/cancelled-statement?from&to -- the customer's
+// cancelled invoices on their own: what each was, what was paid on it, when
+// and why it was cancelled, and where the money went (wallet, or cash out of
+// an account to a number).
+export const getCancelledStatement = asyncHandler(async (req, res) => {
+  const customer = await Customer.findById(req.params.id);
+  if (!customer) throw new ApiError(404, 'Customer not found.');
+  const from = req.query.from ? new Date(req.query.from) : null;
+  const to = req.query.to ? new Date(req.query.to) : null;
+  if (to && req.query.to.length <= 10) to.setHours(23, 59, 59, 999);
+
+  const payments = await Payment.find({ customer: customer._id, status: { $ne: 'CANCELLED' } }).sort({ createdAt: 1 });
+  const { sales, paidOn } = await cancelledPicture(customer._id, payments, from, to);
+
+  const invoices = sales.map((x) => {
+    const paid = (paidOn.get(String(x._id)) || []).map(({ payment, cents }) => ({
+      receiptNumber: payment.receiptNumber,
+      date: payment.createdAt,
+      kind: payment.type === 'sale' ? 'At the sale' : 'Debt payment',
+      account: payment.paymentAccountName || '',
+      amount: fromCents(cents),
+    }));
+    const paidCents = (paidOn.get(String(x._id)) || []).reduce((t, y) => t + y.cents, 0);
+    const r = x.cancelRefund || {};
+    const refundCents = r.to ? r.amountCents : paidCents;
+    return {
+      id: x._id,
+      receiptNumber: x.receiptNumber,
+      date: x.createdAt,
+      items: x.items.map((i) => ({ name: i.itemName, quantity: i.quantity, unitPrice: fromCents(i.unitPriceCents), subtotal: fromCents(i.subtotalCents) })),
+      total: fromCents(x.totalCents),
+      payments: paid,
+      paid: fromCents(paidCents),
+      fromWallet: fromCents(x.walletAmountCents || 0),
+      cancelledAt: x.cancelledAt,
+      reason: x.cancelledReason || '',
+      refund: refundCents > 0 ? { to: r.to || 'WALLET', amount: fromCents(refundCents), accountName: r.accountName || '', reference: r.reference || '', byName: r.byName || '' } : null,
+    };
+  });
+  const sum = (fn) => fromCents(sales.reduce((t, x, i) => t + fn(x, invoices[i]), 0));
+  res.json({
+    success: true,
+    data: {
+      customer: { ...toDTO(customer), since: customer.createdAt },
+      range: { from, to },
+      invoices,
+      totals: {
+        count: invoices.length,
+        total: sum((x) => x.totalCents),
+        paid: sum((x, inv) => Math.round(inv.paid * 100)),
+        toWallet: sum((x, inv) => (inv.refund?.to === 'WALLET' ? Math.round(inv.refund.amount * 100) : 0)),
+        cashBack: sum((x, inv) => (inv.refund?.to === 'ACCOUNT' ? Math.round(inv.refund.amount * 100) : 0)),
+      },
+    },
   });
 });

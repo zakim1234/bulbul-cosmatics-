@@ -11,7 +11,6 @@ import InventoryItem from '../src/models/InventoryItem.js';
 import Expense from '../src/models/Expense.js';
 import { closeDay } from '../src/services/dayCloseService.js';
 import { formatProfitLossRange } from '../src/services/profitLossService.js';
-import { BUSINESS_NAME } from '../src/config/business.js';
 
 async function setup(dbName) {
   await mongoose.connect(`mongodb://127.0.0.1:27028/${dbName}_${Date.now()}?replicaSet=stocktest`);
@@ -160,7 +159,7 @@ test('PROFIT & LOSS -- accrual vs cash basis, expense categories, month columns,
     const ws = wb.getWorksheet('Profit & Loss');
     const cells = [];
     ws.eachRow((row) => cells.push(row.values.slice(1)));
-    assert.equal(cells[0][0], BUSINESS_NAME);
+    assert.equal(cells[0][0], 'Bulbul Cosmetics');
     assert.equal(cells[1][0], 'Profit & Loss');
     assert.equal(cells[3][0], 'Cash Basis');
     assert.equal(cells.find((r) => String(r[0]).trim() === 'Sales Income')[1], 70);

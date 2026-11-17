@@ -14,7 +14,8 @@ export function allocateBatches(lots, quantity, now = new Date()) {
     needed -= take;
     if (!needed) break;
   }
-  if (needed) throw new ApiError(409, 'Insufficient sellable batch stock. Expired and reserved stock cannot be sold.');
+  // More is sold than the batches hold: the rest is sold ahead of stock
+  // (the item's quantity goes below zero) and has no batch to come from.
   return allocations;
 }
 // Cover only genuine pre-batch physical stock; never fabricate sellable stock
@@ -48,7 +49,14 @@ export async function consumeReservedBatches(allocations, session) {
   }
   const total = allocations.reduce((s, a) => s + a.quantity * a.unitCostCents, 0);
   const quantity = allocations.reduce((s, a) => s + a.quantity, 0);
-  return { breakdown: allocations, weightedUnitCostCents: Math.round(total / quantity), totalCostCents: total };
+  return { breakdown: allocations, weightedUnitCostCents: quantity ? Math.round(total / quantity) : 0, totalCostCents: total };
+}
+// The summaries of many items (a search), their batches read in one go.
+export async function batchSummaries(items) {
+  const lots = await InventoryLot.find({ item: { $in: items.map((i) => i._id) } }).populate('supplier', 'name').populate('purchase', 'purchaseNumber').sort({ createdAt: -1 }).lean();
+  const byItem = new Map();
+  for (const lot of lots) byItem.set(String(lot.item), [...(byItem.get(String(lot.item)) || []), lot]);
+  return Promise.all(items.map((item) => batchSummary(item, false, byItem.get(String(item._id)) || [])));
 }
 // NOTE on costing: `realizedProfitCents`/`costCents` below are a batch/lot
 // traceability view (how much did THIS SPECIFIC purchase batch yield),
@@ -57,8 +65,8 @@ export async function consumeReservedBatches(allocations, session) {
 // Weighted Average Cost snapshot frozen on the sale line instead (see
 // reportController.js / dayCloseService.js). Costing method and physical
 // lot/supplier traceability are intentionally separate concerns.
-export async function batchSummary(item, includeActivity = true) {
-  const batches = await InventoryLot.find({ item: item._id }).populate('supplier', 'name').populate('purchase', 'purchaseNumber').sort({ createdAt: -1 }).lean();
+export async function batchSummary(item, includeActivity = true, preloaded = null) {
+  const batches = preloaded || (await InventoryLot.find({ item: item._id }).populate('supplier', 'name').populate('purchase', 'purchaseNumber').sort({ createdAt: -1 }).lean());
   const tracked = batches.reduce((s, b) => s + b.remainingQuantity, 0);
   const legacy = Math.max(0, item.quantity - tracked);
   const expired = batches.reduce((s, b) => s + (b.expiryDate && new Date(b.expiryDate) < new Date() ? b.remainingQuantity : 0), 0) + (item.expiryDate && item.expiryDate < new Date() ? legacy : 0);
@@ -72,5 +80,5 @@ export async function batchSummary(item, includeActivity = true) {
       activity.push({ receiptNumber: sale.receiptNumber, date: sale.confirmedAt, stockSerial: allocation.stockSerial || batch?.stockSerial || '', quantity: allocation.quantity, costCents: allocation.quantity * allocation.unitCostCents });
     }
   }
-  return { activity, batches, expiryStatus: expired > 0 ? 'expired' : batches.some(b => b.remainingQuantity > 0 && b.expiryDate && new Date(b.expiryDate) <= new Date(Date.now() + 30 * 86400000)) ? 'near_expiry' : 'none', expiredQuantity: expired, availableQuantity: Math.max(0, item.quantity - expired - (item.reservedQuantity || 0)), timesStocked: new Set(batches.map(b => String(b.stockEntry || b.purchase?._id || b._id))).size, totalReceived: batches.reduce((s, b) => s + b.originalQuantity, 0) + legacy };
+  return { activity, batches, expiryStatus: expired > 0 ? 'expired' : batches.some(b => b.remainingQuantity > 0 && b.expiryDate && new Date(b.expiryDate) <= new Date(Date.now() + 30 * 86400000)) ? 'near_expiry' : 'none', expiredQuantity: expired, availableQuantity: item.quantity < 0 ? item.quantity - (item.reservedQuantity || 0) : Math.max(0, item.quantity - expired - (item.reservedQuantity || 0)), timesStocked: new Set(batches.map(b => String(b.stockEntry || b.purchase?._id || b._id))).size, totalReceived: batches.reduce((s, b) => s + b.originalQuantity, 0) + legacy };
 }

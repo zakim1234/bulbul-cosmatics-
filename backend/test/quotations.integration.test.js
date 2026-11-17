@@ -47,19 +47,22 @@ test('quotation lifecycle, concurrent conversion, rollback, reports and debt-acc
     assert.equal((await request(`/quotations/${id}/convert`, {})).status, 409);
     assert.equal((await request(`/quotations/${id}/status`, { status: 'Accepted' }, 'PATCH')).status, 200);
     assert.equal((await request(`/quotations/${id}`, payload, 'PUT')).status, 409);
-    // Server uses the accepted snapshot, ignoring edited prices/items in conversion input.
-    const conversions = await Promise.all([1, 2].map(() => request(`/quotations/${id}/convert`, { paidAmount: 50, paymentAccountId: account.id, items: [], discount: 110 })));
+    // Server uses the accepted prices/items (edited ones in the input are ignored); the discount is the invoice's own (none here).
+    const conversions = await Promise.all([1, 2].map(() => request(`/quotations/${id}/convert`, { paidAmount: 50, paymentAccountId: account.id, items: [{ itemId: product.id, quantity: 9, unitPrice: 1 }], discount: 0 })));
     assert.deepEqual(conversions.map(r => r.status).sort(), [200, 201], JSON.stringify(conversions));
     assert.equal(conversions[0].data.id, conversions[1].data.id);
     const saleId = conversions[0].data.id;
     assert.equal(await Sale.countDocuments(), 1);
     assert.equal(await AccountTransaction.countDocuments(), 1);
     assert.equal((await Sale.findById(saleId)).totalCents, 11000);
-    assert.equal((await InventoryItem.findById(product.id)).quantity, 20);
-    assert.equal((await InventoryItem.findById(product.id)).reservedQuantity, 2);
-    assert.equal((await Account.findById(account.id)).currentBalanceCents, 0);
+    // Final at once (not Pending until Close Day): stock, account and customer now.
+    assert.equal((await Sale.findById(saleId)).status, 'CONFIRMED');
+    assert.equal((await InventoryItem.findById(product.id)).quantity, 18);
+    assert.equal((await InventoryItem.findById(product.id)).reservedQuantity, 0);
+    assert.equal((await Account.findById(account.id)).currentBalanceCents, 5000);
+    assert.equal((await Customer.findById(customer.id)).balanceCents, 6000);
     assert.equal((await Quotation.findById(id)).status, 'Converted');
-    assert.equal((await request(`/sales/${saleId}`, { items: [{ itemId: product.id, quantity: 2 }] }, 'PUT')).status, 409);
+    // (Like any invoice it can be edited later -- see editConfirmedSale test.)
     const pending = await request('/quotations', { ...payload, items: [{ itemId: product.id, quantity: 5, unitPrice: 60 }] });
     assert.equal(pending.data.grandTotal, 300);
     await closeDay({ user });
@@ -67,12 +70,9 @@ test('quotation lifecycle, concurrent conversion, rollback, reports and debt-acc
     await openDay({ user });
     assert.equal((await InventoryItem.findById(product.id)).quantity, 18);
     assert.equal((await Customer.findById(customer.id)).balanceCents, 6000);
-    // Not 5000: Close Day posts today's $50 EVC payment and then, in that
-    // same close, resets every operational Account to $0 with an auditable
-    // ADJUSTMENT transaction -- the $50 is preserved permanently in the
-    // DayClose snapshot's paymentBreakdown (asserted below), not in the
-    // live balance, which always starts the next business day at zero.
-    assert.equal((await Account.findById(account.id)).currentBalanceCents, 0);
+    // Close Day posts today's $50 EVC payment and the money stays in the
+    // account (it is also kept in the DayClose snapshot, asserted below).
+    assert.equal((await Account.findById(account.id)).currentBalanceCents, 5000);
     const dayCloseDoc = await DayClose.findOne();
     assert.equal(dayCloseDoc.revenueCents, 11000);
     assert.equal(dayCloseDoc.paymentBreakdown.find(p => String(p.account) === String(account.id))?.amountCents, 5000);
@@ -85,10 +85,8 @@ test('quotation lifecycle, concurrent conversion, rollback, reports and debt-acc
     assert.equal(payments[0].data.paymentId, payments[1].data.paymentId);
     assert.equal(await Payment.countDocuments({ type: 'debt_payment' }), 1);
     assert.equal((await Customer.findById(customer.id)).balanceCents, 2000);
-    // 4000, not 9000: the account was reset to 0 at Close Day above (see
-    // line 73), so this is just the $40 debt payment posted immediately
-    // afterward, not an accumulation on top of the pre-reset 5000.
-    assert.equal((await Account.findById(account.id)).currentBalanceCents, 4000);
+    // The $50 kept at Close Day plus this $40 debt payment.
+    assert.equal((await Account.findById(account.id)).currentBalanceCents, 9000);
     assert.equal((await Sale.findById(saleId)).totalCents, 11000);
     assert.equal((await Sale.findById(saleId)).outstandingCents, 2000);
     assert.equal(await AccountTransaction.countDocuments({ type: 'CUSTOMER_DEBT_PAYMENT' }), 1);
@@ -98,8 +96,12 @@ test('quotation lifecycle, concurrent conversion, rollback, reports and debt-acc
     assert.equal((await request(`/customers/${customer.id}/payments`, { ...paymentPayload, amount: 10 })).status, 409);
     const revenue = await request('/reports/sales?range=today', null, 'GET');
     assert.equal(revenue.data.totalSales, 110);
-    // A later insufficient-stock failure rolls back every conversion side effect.
-    const scarce = await request('/quotations', { ...payload, items: [{ itemId: product.id, quantity: 19, unitPrice: 2 }] });
+    // A conversion that fails part-way rolls back every side effect. Selling
+    // ahead of stock is allowed, so the failure here is a line whose only
+    // stock on hand is expired (never sold).
+    await request('/stock', { rows: [{ name: 'Old Syrup', quantity: 5, costPrice: 1, sellingPrice: 2, expiryDate: '2020-01-01' }] });
+    const oldSyrup = await InventoryItem.findOne({ name: 'Old Syrup' });
+    const scarce = await request('/quotations', { ...payload, items: [{ itemId: product.id, quantity: 19, unitPrice: 2 }, { itemId: oldSyrup.id, quantity: 1, unitPrice: 2 }] });
     await request(`/quotations/${scarce.data.id}/status`, { status: 'Accepted' }, 'PATCH');
     assert.equal((await request(`/quotations/${scarce.data.id}/convert`, {})).status, 409);
     assert.equal((await Quotation.findById(scarce.data.id)).status, 'Accepted');

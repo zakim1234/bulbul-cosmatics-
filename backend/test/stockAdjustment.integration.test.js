@@ -16,7 +16,7 @@ async function setup(dbName) {
   process.env.JWT_SECRET = 'isolated-stock-adjustment-secret';
   await Promise.all(Object.values(mongoose.models).map((m) => m.init()));
   const admin = await User.create({ username: 'admin', name: 'Admin', passwordHash: 'unused', role: 'admin' });
-  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['stock', 'pos'] });
+  const cashier = await User.create({ username: 'cashier', name: 'Cashier', passwordHash: 'unused', role: 'cashier', permissions: ['stock', 'stockAdjustments', 'pos'] });
   const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const requestAs = (user) => async (path, body, method = body != null ? 'POST' : 'GET') => {
@@ -79,7 +79,7 @@ test('STOCK ADJUSTMENT -- decrease writes off nearest-expiry batches first and r
   }
 });
 
-test('STOCK ADJUSTMENT -- units held by pending invoices cannot be written off', { timeout: 90000 }, async () => {
+test('STOCK ADJUSTMENT -- units already sold cannot be written off', { timeout: 90000 }, async () => {
   const { server, request } = await setup('adj_reserved');
   try {
     const { item } = await stockedItem();
@@ -91,7 +91,8 @@ test('STOCK ADJUSTMENT -- units held by pending invoices cannot be written off',
     const tooMuch = await request('/stock-adjustments', { itemId: item.id, direction: 'DECREASE', quantity: 3, reason: 'LOST' });
     assert.equal(tooMuch.status, 409);
     assert.match(tooMuch.message, /Only 2 box/);
-    assert.equal((await InventoryItem.findById(item.id)).quantity, 10, 'nothing changed on a refused adjustment');
+    // The sale took its 8 at once (no Pending): 2 are left.
+    assert.equal((await InventoryItem.findById(item.id)).quantity, 2, 'nothing changed on a refused adjustment');
 
     const ok = await request('/stock-adjustments', { itemId: item.id, direction: 'DECREASE', quantity: 2, reason: 'LOST' });
     assert.equal(ok.status, 201, JSON.stringify(ok));
@@ -190,12 +191,32 @@ test('STOCK COUNT -- many items in one go, unchanged skipped, all-or-nothing, on
     assert.ok(saved.every((x) => x.note === 'Month-end count'));
     assert.equal((await request(`/stock-adjustments?q=${res.data.countNumber}`)).data.length, 2);
 
-    // One impossible row (below units held by a pending invoice) -> nothing is saved.
-    const customer = await Customer.create({ name: 'Cumar', phone: '1' });
-    assert.equal((await request('/sales', { customerId: customer.id, items: [{ itemId: b.id, quantity: 5 }], paidAmount: 0 })).status, 201);
+    // One statement for the whole save: both items changed in this count together.
+    const doc = await request(`/stock-adjustments/document/${res.data.countNumber}`);
+    assert.equal(doc.status, 200, JSON.stringify(doc));
+    assert.equal(doc.data.isCount, true);
+    assert.equal(doc.data.note, 'Month-end count');
+    assert.deepEqual(doc.data.rows.map((r) => r.itemName).sort(), [a.name, b.name].sort());
+    assert.deepEqual(doc.data.totals, { items: 2, writtenOff: 7, addedBack: 1, netLoss: 6 });
+    // A single adjustment opens by its own number.
+    const single = await request(`/stock-adjustments/document/${doc.data.rows[0].adjustmentNumber}`);
+    assert.equal(single.status, 200);
+    assert.equal((await request('/stock-adjustments/document/NOPE-1')).status, 404);
+
+    // The list by save: the whole count is ONE line, with both items in it.
+    const saves = await request('/stock-adjustments?group=save');
+    assert.equal(saves.status, 200, JSON.stringify(saves));
+    const line = saves.data.find((x) => x.number === res.data.countNumber);
+    assert.deepEqual([line.isCount, line.items, line.writtenOff, line.addedBack, line.netLoss], [true, 2, 7, 1, 6]);
+    assert.equal(saves.data.filter((x) => x.number === res.data.countNumber).length, 1);
+    // Searching an item finds the save it is in.
+    const found = await request(`/stock-adjustments?group=save&q=${encodeURIComponent(b.name)}`);
+    assert.ok(found.data.some((x) => x.number === res.data.countNumber));
+
+    // One impossible row (a count below zero) -> nothing is saved.
     const before = await StockAdjustment.countDocuments();
-    const bad = await request('/stock-adjustments/count', { rows: [{ itemId: c.id, countedQuantity: 1 }, { itemId: b.id, countedQuantity: 2 }] });
-    assert.equal(bad.status, 409, JSON.stringify(bad));
+    const bad = await request('/stock-adjustments/count', { rows: [{ itemId: c.id, countedQuantity: 1 }, { itemId: b.id, countedQuantity: -2 }] });
+    assert.ok(bad.status >= 400, JSON.stringify(bad));
     assert.equal(await StockAdjustment.countDocuments(), before);
     assert.equal((await InventoryItem.findById(c.id)).quantity, 4, 'Zinc untouched because Biotin failed');
 

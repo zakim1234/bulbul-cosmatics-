@@ -1,7 +1,7 @@
 import { draftKey, readDraft, writeDraft, clearDraft, isDraftMeaningful } from '../../utils/posDraft.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { ShoppingCart, ClipboardList, Pencil, ChevronDown, ArrowLeft } from 'lucide-react';
+import { ShoppingCart, ClipboardList, Pencil, ArrowLeft, UserRound, Wallet } from 'lucide-react';
 import client from '../../api/client.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useBusinessDay } from '../../hooks/useBusinessDay.js';
@@ -13,10 +13,11 @@ import Card from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
 import Badge from '../../components/ui/Badge.jsx';
 import { Input, Label, Textarea } from '../../components/ui/Field.jsx';
-import AccountSelect from '../../components/AccountSelect.jsx';
+import AccountSelect, { useAccounts } from '../../components/AccountSelect.jsx';
 import CustomerSearchBox from './CustomerSearchBox.jsx';
-import SellerItemsGrid, { stockShortMessage } from './SellerItemsGrid.jsx';
+import SellerItemsGrid from './SellerItemsGrid.jsx';
 import DraftsPanel from './DraftsPanel.jsx';
+import { canEditInvoice } from '../../constants/permissions.js';
 
 export default function POSPage() {
   const toast = useToast();
@@ -49,17 +50,6 @@ export default function POSPage() {
   const [drafts, setDrafts] = useState([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
 
-  // Below the lg breakpoint the Customer+Payment side panel collapses into a
-  // tap-to-expand section above Items, so Items (the main work area) is what
-  // a cashier sees first without scrolling. It has no effect at lg+, where
-  // the panel is always shown docked to the right. Collapses on its own once
-  // a customer is picked, since that's the natural point to turn attention
-  // to items; the cashier can still tap it open again for payment.
-  const [mobilePanelOpen, setMobilePanelOpen] = useState(true);
-  useEffect(() => {
-    if (customer) setMobilePanelOpen(false);
-  }, [customer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // After Close Day, Seller/POS is locked for everyone (admins too) until
   // the day is opened; the server enforces the same rule.
   const { closed: posLocked } = useBusinessDay();
@@ -83,9 +73,16 @@ export default function POSPage() {
       try {
         const saleRes = await client.get(`/sales/${editId}`);
         const sale = saleRes.data.data;
-        if (sale.status !== 'DRAFT') {
-          toast.error('This invoice is no longer a pending Draft.');
+        if (sale.status === 'CANCELLED') {
+          toast.error('This invoice is cancelled.');
           navigate('/pos', { replace: true });
+          return;
+        }
+        // Edited by the Super Admin (or a closed day without the permission):
+        // it can be seen, not edited.
+        if (!canEditInvoice(user, sale)) {
+          toast.error(sale.lockedBySuperAdmin || sale.lockedByAdmin ? `${sale.receiptNumber} was corrected by ${sale.editedByName || 'an admin'}: you can see it, not edit it.` : 'You do not have permission to edit this invoice.');
+          navigate(`/receipt/${sale.id}`, { replace: true });
           return;
         }
         const customerRes = await client.get(`/customers/${sale.customer}`);
@@ -140,8 +137,8 @@ export default function POSPage() {
         const [customerResult, ...products] = await Promise.all([client.get(`/customers/${q.customer}`), ...q.items.map(i => client.get(`/inventory/${i.itemId}`))]);
         if (!active) return;
         setCustomer(customerResult.data.data);
-        setLines(q.items.map((i, index) => ({ ...i, costPrice: products[index].data.data.costPrice, available: products[index].data.data.availableQuantity })));
-        setDiscount(String(q.totalDiscount));
+        setLines(q.items.map((i, index) => ({ ...i, discount: 0, costPrice: products[index].data.data.costPrice, available: products[index].data.data.availableQuantity })));
+        setDiscount('0'); // the invoice's own discount, given now (a quotation has none)
         setQuotation(q);
       } catch (err) { if (active) toast.error(err.friendlyMessage || err.message || 'Unable to load quotation.'); }
       finally { if (active) setLoadingDraft(false); }
@@ -176,22 +173,30 @@ export default function POSPage() {
   const walletNum = autoWalletApplies ? Math.min(total, walletAvailable) : manualWalletNum;
   const paidNum = manualPaidNum;
   const remaining = Math.max(0, total - paidNum - walletNum);
-  const hasOverStock = lines.some((l) => l.quantity > l.available || l.quantity <= 0);
+  // Selling more than is in stock is allowed (stock goes below zero); only a
+  // missing quantity stops the sale.
+  const hasOverStock = lines.some((l) => l.quantity <= 0);
   const hasInvalidDiscount = lines.some((l) => (Number(l.discount) || 0) > l.quantity * l.unitPrice);
   const needsAccount = paidNum > 0 && !paymentAccountId;
+  // Merchant VAT: paying through a MERCHANT account with a VAT %, the
+  // customer sends the paid amount and the merchant keeps the VAT out of it:
+  // our account gets paid - VAT (the invoice itself is unchanged).
+  const accountsList = useAccounts();
+  const payAccount = accountsList.find((a) => a.id === paymentAccountId);
+  const isMerchant = !!payAccount && (payAccount.type === 'MERCHANT' || /merchant/i.test(payAccount.name || ''));
+  // The VAT % box: filled from the Merchant account, can be changed per sale.
+  const [vatInput, setVatInput] = useState('');
+  useEffect(() => {
+    if (isMerchant) setVatInput(payAccount.vatPercent ? String(payAccount.vatPercent) : '');
+  }, [paymentAccountId, isMerchant]); // eslint-disable-line react-hooks/exhaustive-deps
+  const vatPercent = isMerchant ? Math.min(100, Math.max(0, Number(vatInput) || 0)) : 0;
+  const vatAmount = vatPercent > 0 && paidNum > 0 ? Math.round(paidNum * vatPercent) / 100 : 0;
   const canComplete = !submitting && !loadingDraft && (!quotationId || !!quotation) && !!customer && lines.length > 0 && !hasOverStock && !hasInvalidDiscount && !needsAccount;
-  const panelSummary = `${customer ? customer.name : 'Select customer'} · ${formatCurrency(total)}${
-    customer ? ` · ${remaining > 0 ? `Balance ${formatCurrency(remaining)}` : 'Fully Paid'}` : ''
-  }`;
 
   const handleAddLine = (product) => {
     setLines((prev) => {
       const existing = prev.find((l) => l.itemId === product.id);
       if (existing) {
-        if (existing.quantity >= product.availableQuantity) {
-          toast.error(stockShortMessage(product.availableQuantity));
-          return prev;
-        }
         return prev.map((l) => (l.itemId === product.id ? { ...l, quantity: l.quantity + 1 } : l));
       }
       return [
@@ -208,7 +213,7 @@ export default function POSPage() {
           // for this sale; picking an ordinary item from the search starts the
           // Qty field empty (0) so the cashier types the quantity themselves,
           // instead of it defaulting to "1".
-          quantity: product.saleQuantity ? Math.max(1, Math.min(product.saleQuantity, product.availableQuantity || 1)) : 0,
+          quantity: product.saleQuantity ? Math.max(1, product.saleQuantity) : 0,
           available: product.availableQuantity,
         },
       ];
@@ -255,6 +260,17 @@ export default function POSPage() {
     navigate('/pos');
   };
 
+  // Enter in a box saves the invoice, the same as clicking Save -- once it
+  // can be saved (customer, items...). Not in the notes (a new line), the
+  // new-customer form, or when Enter picks an item or customer from a list.
+  const saveOnEnter = (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.defaultPrevented || e.nativeEvent.isComposing || !canComplete) return;
+    const t = e.target;
+    if (t.tagName !== 'INPUT' || t.form || t.closest('[data-enter-save="off"]')) return;
+    e.preventDefault();
+    handleSubmit();
+  };
+
   const handleSubmit = async () => {
     if (submitLock.current || loadingDraft) return;
     if (!customer) {
@@ -268,11 +284,6 @@ export default function POSPage() {
     const missingQty = lines.find((l) => !(l.quantity > 0));
     if (missingQty) {
       toast.error(`Enter a quantity for "${missingQty.name}".`);
-      return;
-    }
-    const overStock = lines.find((l) => l.quantity > l.available);
-    if (overStock) {
-      toast.error(`"${overStock.name}" exceeds available stock.`);
       return;
     }
     const overDiscounted = lines.find((l) => (Number(l.discount) || 0) > l.quantity * l.unitPrice);
@@ -295,13 +306,14 @@ export default function POSPage() {
         paidAmount: paidNum,
         walletAmount: walletNum,
         paymentAccountId,
+        vatPercent: isMerchant ? vatPercent : undefined,
         notes,
       };
       let saleId;
       if (quotationId) {
-        const res = await client.post(`/quotations/${quotationId}/convert`, { paidAmount: paidNum, paymentAccountId });
+        const res = await client.post(`/quotations/${quotationId}/convert`, { paidAmount: paidNum, paymentAccountId, discount: Number(discount) || 0 });
         saleId = res.data.data.id;
-        toast.success(res.data.existing ? 'This quotation has already been converted.' : 'Quotation converted to a pending invoice. Close Day will confirm it.');
+        toast.success(res.data.existing ? 'This quotation has already been converted.' : 'Quotation converted to a final invoice -- stock, the customer and the account are updated now.');
       } else if (editId) {
         const res = await client.put(`/sales/${editId}`, payload);
         saleId = res.data.data.id;
@@ -328,14 +340,14 @@ export default function POSPage() {
     // No max-width/centering here: <main> in AppLayout already gives every
     // page a consistent 16-24px edge padding (p-4 sm:p-6); this page fills
     // the rest of the window on its own, like every other page in the app.
-    <div className="space-y-4">
+    <div className="space-y-4" onKeyDown={saveOnEnter}>
       {/* Plain navigation, on purpose: the draft auto-saves as the cashier
           types (see posDraft.js), so leaving via Back never needs a
           confirmation and never touches the draft -- returning to Seller/POS
           picks this exact invoice back up automatically. Styled to match the
           "Back to X" link used on every other detail page in the app. */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Link to="/pos" className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <Link to="/pos" className="flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> Back to Sales Invoices
         </Link>
         <Button variant="secondary" disabled={submitting} onClick={handleCancel}>
@@ -347,154 +359,171 @@ export default function POSPage() {
         title={quotationId ? 'Convert Quotation to Invoice' : editId ? 'Edit Sales Invoice' : 'Add Sales Invoice'}
         subtitle="Find the customer, add products, and create the pending invoice"
       />
-      {storageWarning && <p className="text-sm text-amber-700">Browser storage is unavailable. This draft is retained during navigation, but cannot survive a reload.</p>}
+      {storageWarning && <p className="text-sm text-brand-700">Browser storage is unavailable. This draft is retained during navigation, but cannot survive a reload.</p>}
       {quotation && <p className="rounded-lg bg-brand-50 p-3 text-sm">From {quotation.quotationNumber}. Accepted items, prices and discount are preserved. {quotation.notes}</p>}
       {editId && (
         <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-4 py-2.5 text-sm font-medium text-brand-700">
-          <Pencil className="h-4 w-4" /> Editing Draft Invoice {editReceiptNumber || editId}
+          <Pencil className="h-4 w-4" /> Editing Invoice {editReceiptNumber || editId}
           {loadingDraft && <span className="text-brand-400">(loading...)</span>}
         </div>
       )}
 
-      {/* Below lg: a single stacked column, Customer+Payment collapsed above
-          Items. At lg+: Items is the wide main column (left), Customer+
-          Payment is a narrower panel docked to the right, pinned in view
-          with its own Complete Sale button so it's never scrolled away. */}
-      {/* Items gets ~70-75% of the width, the Customer+Payment panel ~25-30%
-          -- a true percentage split (fr units), not a fixed pixel column, so
-          the ratio holds at any lg+ viewport width. minmax() keeps the panel
-          from ever getting too narrow to use on a smaller lg screen. */}
-      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(280px,1fr)] lg:items-start lg:gap-4">
-        <div className="order-2 min-w-0 lg:order-none">
-          <Card dense title="Items">
-            <fieldset disabled={submitting || !!quotationId}>
-              <SellerItemsGrid
-                lines={lines}
-                grandTotal={rowsTotal}
-                onAddLine={handleAddLine}
-                onLineChange={handleLineChange}
-                onRemoveLine={handleRemove}
-                disabled={submitting}
-                focusTrigger={customer?.id}
-              />
-            </fieldset>
-          </Card>
+      {/* The customer comes first: a full-width bar at the top of the invoice. */}
+      <section className="relative z-20 mb-4 rounded-2xl border border-neutral-200/80 bg-white p-4 sm:p-5">
+        <div className="mb-3 flex items-center gap-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl surface-blue">
+            <UserRound className="h-4.5 w-4.5" />
+          </span>
+          <div>
+            <p className="text-sm font-bold text-neutral-950">Customer</p>
+            <p className="text-xs text-neutral-500">Who is this invoice for? Search by name or phone, or add a new customer.</p>
+          </div>
         </div>
+        <fieldset disabled={submitting || !!quotationId}><CustomerSearchBox hideLabel searchValue={customerQuery} onSearchChange={setCustomerQuery} enteredCustomer={enteredCustomer} onEnteredCustomerChange={setEnteredCustomer} activeCustomer={customer} onSelect={setCustomer} onClear={() => { setCustomer(null); setWalletAmount(''); }} cartTotal={total} paidAmount={paidNum} walletAmount={walletNum} /></fieldset>
+      </section>
 
-        <div className="order-1 mb-4 lg:order-none lg:sticky lg:top-4 lg:mb-0">
-          <button
-            type="button"
-            onClick={() => setMobilePanelOpen((o) => !o)}
-            className="mb-3 flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm font-medium text-slate-700 shadow-sm lg:hidden"
-          >
-            <span className="truncate">{panelSummary}</span>
-            <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${mobilePanelOpen ? 'rotate-180' : ''}`} />
-          </button>
+      {/* Items, then Payment: both full width, one under the other. */}
+      <Card dense title="Items" className="mb-4">
+        <fieldset disabled={submitting || !!quotationId}>
+          <SellerItemsGrid
+            lines={lines}
+            grandTotal={rowsTotal}
+            onAddLine={handleAddLine}
+            onLineChange={handleLineChange}
+            onRemoveLine={handleRemove}
+            disabled={submitting}
+            focusTrigger={customer?.id}
+          />
+        </fieldset>
+      </Card>
 
-          <div className={`${mobilePanelOpen ? 'block' : 'hidden'} space-y-4 lg:block`}>
-            <Card dense>
-              <fieldset disabled={submitting || !!quotationId}><CustomerSearchBox searchValue={customerQuery} onSearchChange={setCustomerQuery} enteredCustomer={enteredCustomer} onEnteredCustomerChange={setEnteredCustomer} activeCustomer={customer} onSelect={setCustomer} onClear={() => { setCustomer(null); setWalletAmount(''); }} cartTotal={total} paidAmount={paidNum} walletAmount={walletNum} /></fieldset>
-            </Card>
+      <Card
+        dense
+        className="mb-4"
+        title={
+          <span className="flex items-center gap-1.5">
+            <Wallet className="h-4 w-4" /> Payment
+          </span>
+        }
+        subtitle="Discount, how the customer pays, then save the invoice"
+        actions={<span className="figure text-base font-extrabold text-neutral-950">{formatCurrency(total)}</span>}
+      >
+        <div className="grid gap-5 text-sm lg:grid-cols-3 lg:gap-6">
+          {/* 1. Totals */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-neutral-600">
+              <span>Subtotal</span>
+              <span className="font-medium tabular-nums text-neutral-800">{formatCurrency(subtotal)}</span>
+            </div>
+            {lineDiscountTotal > 0 && (
+              <div className="flex justify-between text-neutral-500">
+                <span>Line Discounts</span>
+                <span className="tabular-nums">{formatCurrency(lineDiscountTotal)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <Label>Discount (optional)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={discount}
+                onChange={(e) => setDiscount(e.target.value)}
+                className="w-32 text-right tabular-nums"
+                disabled={submitting}
+              />
+            </div>
+            <div className="flex justify-between border-t border-neutral-100 pt-2 text-base font-bold text-neutral-900">
+              <span>Total After Discount</span>
+              <span className="tabular-nums">{formatCurrency(total)}</span>
+            </div>
+          </div>
 
-            <Card dense title="Payment">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-slate-600">
-                  <span>Subtotal</span>
-                  <span className="font-medium tabular-nums text-slate-800">{formatCurrency(subtotal)}</span>
-                </div>
-                {lineDiscountTotal > 0 && (
-                  <div className="flex justify-between text-slate-500">
-                    <span>Line Discounts</span>
-                    <span className="tabular-nums">{formatCurrency(lineDiscountTotal)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <Label>Discount (optional)</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={discount}
-                    onChange={(e) => setDiscount(e.target.value)}
-                    className="w-28 text-right tabular-nums"
-                    disabled={submitting || !!quotationId}
-                  />
-                </div>
-                <div className="flex justify-between border-t border-slate-100 pt-2 text-base font-bold text-slate-900">
-                  <span>Total After Discount</span>
-                  <span className="tabular-nums">{formatCurrency(total)}</span>
-                </div>
-
-                {customer && walletAvailable > 0 && (
-                  <div className="pt-1">
-                    <div className="flex items-center justify-between">
-                      <Label>Pay from Wallet (available {formatCurrency(walletAvailable)})</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={walletAmount}
-                        onChange={(e) => setWalletAmount(e.target.value)}
-                        className="w-28 text-right tabular-nums"
-                        disabled={submitting || !!quotationId}
-                      />
-                    </div>
-                    {autoWalletApplies && (
-                      <p className="mt-1 text-right text-xs text-brand-600">
-                        Left blank — {formatCurrency(walletNum)} will be used from the wallet automatically.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div>
-                  <Label>Payment Method</Label>
-                  <AccountSelect value={paymentAccountId} onChange={setPaymentAccountId} disabled={submitting} placeholder="Select account..." />
-                </div>
-                <div>
-                  <Label>Paid Amount</Label>
+          {/* 2. How it is paid */}
+          <div className="space-y-2 lg:border-l lg:border-neutral-100 lg:pl-6">
+            {customer && walletAvailable > 0 && (
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <Label>Pay from Wallet (available {formatCurrency(walletAvailable)})</Label>
                   <Input
                     type="number"
                     min="0"
                     step="0.01"
                     placeholder="0.00"
-                    value={paidAmount}
-                    onChange={(e) => setPaidAmount(e.target.value)}
-                    className="w-full text-right tabular-nums"
-                    disabled={submitting}
+                    value={walletAmount}
+                    onChange={(e) => setWalletAmount(e.target.value)}
+                    className="w-32 text-right tabular-nums"
+                    disabled={submitting || !!quotationId}
                   />
                 </div>
-                {needsAccount && <p className="text-right text-xs font-medium text-rose-600">Select an account to record this payment.</p>}
-
-                <div className={`flex justify-between rounded-lg px-3 py-2 font-semibold tabular-nums ${remaining > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                  <span className="font-semibold">{remaining > 0 ? 'Outstanding Balance (added to debt)' : 'Fully Paid'}</span>
-                  <span>{formatCurrency(remaining)}</span>
-                </div>
-
-                {!quotationId && (
-                  <div className="pt-1">
-                    <Label>Notes</Label>
-                    <Textarea rows={2} maxLength={500} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" disabled={submitting} />
-                  </div>
+                {autoWalletApplies && (
+                  <p className="mt-1 text-right text-xs text-brand-600">Left blank — {formatCurrency(walletNum)} will be used from the wallet automatically.</p>
                 )}
-
-                <div className="mt-2 grid grid-cols-2 gap-3">
-                  <Button variant="secondary" size="lg" disabled={submitting} onClick={handleCancel}>
-                    Cancel
-                  </Button>
-                  <Button size="lg" loading={submitting} disabled={!canComplete} onClick={handleSubmit}>
-                    <ShoppingCart className="h-4 w-4" /> {editId ? 'Save Changes' : 'Save / Create Sale'}
-                  </Button>
-                </div>
-                <p className="text-center text-xs text-slate-400">
-                  {editId ? 'This draft stays PENDING until Close Day confirms it.' : 'This invoice is PENDING until Close Day confirms it.'}
-                </p>
               </div>
-            </Card>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Payment Method</Label>
+                <AccountSelect value={paymentAccountId} onChange={setPaymentAccountId} disabled={submitting} placeholder="Select account..." />
+              </div>
+              <div>
+                <Label>Paid Amount</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={paidAmount}
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                  className="w-full text-right tabular-nums"
+                  disabled={submitting}
+                />
+              </div>
+            </div>
+            {needsAccount && <p className="text-right text-xs font-medium text-brand-600">Select an account to record this payment.</p>}
+            {isMerchant && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm tabular-nums">
+                <div className="flex items-center justify-between gap-3 text-amber-800">
+                  <span className="font-semibold">Merchant VAT</span>
+                  <span className="flex items-center gap-1">
+                    <input type="number" min="0" max="100" step="0.01" value={vatInput} onChange={(e) => setVatInput(e.target.value)} placeholder="0" disabled={submitting} className="w-16 rounded-md border border-amber-300 bg-white px-2 py-1 text-right text-sm" />
+                    <span>%</span>
+                  </span>
+                  <span>−{formatCurrency(vatAmount)}</span>
+                </div>
+                <div className="mt-1 flex justify-between text-neutral-700"><span>Customer sends ({payAccount.name})</span><span>{formatCurrency(paidNum)}</span></div>
+                <div className="flex justify-between font-bold text-neutral-900"><span>Our {payAccount.name} account gets</span><span>{formatCurrency(Math.max(0, paidNum - vatAmount))}</span></div>
+                <p className="mt-1 text-[11px] text-amber-700">The merchant company keeps the VAT. It is recorded as a Merchant VAT expense, not our money.</p>
+              </div>
+            )}
+            <div className={`flex justify-between rounded-lg px-3 py-2 font-semibold tabular-nums ${remaining > 0 ? 'bg-brand-50 text-brand-700' : 'bg-emerald-50 text-emerald-700'}`}>
+              <span className="font-semibold">{remaining > 0 ? 'Outstanding Balance (added to debt)' : 'Fully Paid'}</span>
+              <span>{formatCurrency(remaining)}</span>
+            </div>
+          </div>
+
+          {/* 3. Notes and save */}
+          <div className="flex flex-col gap-3 lg:border-l lg:border-neutral-100 lg:pl-6">
+            {!quotationId && (
+              <div>
+                <Label>Notes</Label>
+                <Textarea rows={2} maxLength={500} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" disabled={submitting} />
+              </div>
+            )}
+            <div className="mt-auto grid grid-cols-[auto_1fr] gap-3">
+              <Button variant="secondary" size="lg" disabled={submitting} onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button size="lg" loading={submitting} disabled={!canComplete} onClick={handleSubmit}>
+                <ShoppingCart className="h-4 w-4" /> {editId ? 'Save Changes' : 'Save / Create Sale'}
+              </Button>
+            </div>
+            <p className="text-center text-xs text-neutral-400">
+              Saved at once to the customer, the account and stock; Close Day counts it in today's totals.
+            </p>
           </div>
         </div>
-      </div>
+      </Card>
 
       <Card
         dense

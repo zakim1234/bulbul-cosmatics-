@@ -66,6 +66,11 @@ const saleReturnSchema = new mongoose.Schema(
     debtReducedCents: { type: Number, required: true, default: 0 }, // portion applied against still-unpaid balance
     refundCents: { type: Number, required: true, default: 0 }, // portion refunded out of the payment account (already paid)
     walletRefundCents: { type: Number, default: 0 }, // already-paid portion that came from wallet credit, given back to the wallet
+    // Where the rest of the paid money went: the customer's wallet, or cash out
+    // of an account (and the number it was sent to).
+    refundTo: { type: String, enum: ['', 'WALLET', 'ACCOUNT'], default: '' },
+    refundAccountName: { type: String, default: '' },
+    refundReference: { type: String, default: '', trim: true, maxlength: 100 },
     reason: { type: String, default: '' },
     // Snapshots taken immediately after this specific return was applied --
     // for the Return Receipt to show the balances as they stood at that
@@ -96,6 +101,14 @@ const saleSchema = new mongoose.Schema(
     // since that cash already entered an Account at deposit time.
     walletAmountCents: { type: Number, default: 0, min: 0 },
     paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+    // Merchant VAT the customer paid on top. It belongs to the merchant
+    // company: recorded here only, never in revenue, profit or account balances.
+    vatPercent: { type: Number, default: 0 },
+    vatCents: { type: Number, default: 0 },
+    // true (new sales): the customer paid the normal amount and the merchant
+    // company took the VAT out of it -- the account gets paid - VAT and the
+    // VAT is an expense (Merchant VAT). false (older sales): paid on top.
+    vatDeducted: { type: Boolean, default: false },
     accountTransaction: { type: mongoose.Schema.Types.ObjectId, ref: 'AccountTransaction', default: null },
     balanceAddedCents: { type: Number, required: true, default: 0 }, // credit created by this sale (totalCents - paidAmountCents - walletAmountCents)
     outstandingCents: { type: Number, required: true, default: 0 }, // remaining unpaid on THIS invoice (decreases as debt payments are allocated to it)
@@ -107,8 +120,31 @@ const saleSchema = new mongoose.Schema(
     // CANCELLED: released reservation, excluded from reports, history preserved.
     status: { type: String, enum: ['DRAFT', 'CONFIRMED', 'CANCELLED'], default: 'DRAFT' },
     confirmedAt: { type: Date, default: null },
+    // An invoice from a quotation is confirmed at once: true until the next
+    // Close Day has counted it in that day's totals.
+    awaitingDayClose: { type: Boolean, default: false },
+    // Who edited it last, and when. Edited by the Super Admin, it is locked:
+    // others see the change but cannot edit or cancel it unless given the
+    // 'Change invoices the Super Admin edited' permission.
+    editedAt: { type: Date, default: null },
+    editedByName: { type: String, default: '' },
+    lockedBySuperAdmin: { type: Boolean, default: false },
+    // An admin corrected someone else's invoice: staff see it, may not change it.
+    lockedByAdmin: { type: Boolean, default: false },
     cancelledAt: { type: Date, default: null },
     cancelledReason: { type: String, default: '' },
+    // Where the money paid on a confirmed invoice went when it was cancelled:
+    // the customer's wallet, or cash handed back out of an account (and the
+    // number it was sent to). Shown on the Refunds report.
+    cancelRefund: {
+      to: { type: String, enum: ['', 'WALLET', 'ACCOUNT'], default: '' },
+      amountCents: { type: Number, default: 0 },
+      account: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+      accountName: { type: String, default: '' },
+      reference: { type: String, default: '', trim: true, maxlength: 100 },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      byName: { type: String, default: '' },
+    },
     returns: { type: [saleReturnSchema], default: [] },
     notes: { type: String, default: '', trim: true, maxlength: 500 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

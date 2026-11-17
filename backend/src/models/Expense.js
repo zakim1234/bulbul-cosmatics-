@@ -12,7 +12,11 @@ const expenseSchema = new mongoose.Schema(
     category: { type: String, required: true, trim: true }, // validated against ExpenseCategory
     amountCents: { type: Number, required: true, min: 1 },
     date: { type: Date, required: true },
-    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
+    // null for one charged now and paid later (see `liability`).
+    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null },
+    // Charged now, paid later: the line on the Liabilities page that is paid
+    // from an account when the money comes. No account moved for the expense.
+    liability: { type: mongoose.Schema.Types.ObjectId, ref: 'Liability', default: null },
     paymentAccountName: { type: String, default: '' },
     accountTransaction: { type: mongoose.Schema.Types.ObjectId, ref: 'AccountTransaction', default: null },
     note: { type: String, default: '', maxlength: 500 },

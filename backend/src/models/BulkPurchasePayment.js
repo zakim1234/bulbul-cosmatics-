@@ -12,10 +12,12 @@ const schema = new mongoose.Schema(
     supplier: { type: mongoose.Schema.Types.ObjectId, ref: 'Supplier', required: true },
     supplierName: { type: String, required: true },
     amountCents: { type: Number, required: true, min: 1 },
+    // Discount the supplier gave on top of the money paid (no money moves).
+    discountCents: { type: Number, default: 0, min: 0 },
     // Total still owed on the invoices that were selected, before paying.
     selectedOwedCents: { type: Number, required: true, min: 0 },
     percentage: { type: Number, default: null }, // the % picked, when the amount came from one
-    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
+    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null }, // null: an offset (no money moved)
     paymentAccountName: { type: String, default: '' },
     accountTransaction: { type: mongoose.Schema.Types.ObjectId, ref: 'AccountTransaction', default: null },
     paymentDate: { type: Date, required: true },
@@ -30,6 +32,7 @@ const schema = new mongoose.Schema(
         amountCents: { type: Number, required: true, min: 0 },
         previousBalanceCents: { type: Number, required: true },
         newBalanceCents: { type: Number, required: true },
+        discount: { type: Boolean, default: false }, // the supplier's discount, not money
       },
     ],
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

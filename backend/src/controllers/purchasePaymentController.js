@@ -10,7 +10,7 @@ import { runInTransaction } from '../utils/transaction.js';
 import { logAudit } from '../services/auditService.js';
 import { postImmediateTransaction } from '../services/accountService.js';
 import { purchaseToDTO, paymentToDTO, paymentStatusOf, parsePaymentDate } from './purchaseController.js';
-import { paySupplier, cancelBulkPayment, OUTSTANDING, OLDEST_FIRST } from '../services/supplierPaymentService.js';
+import { paySupplier, cancelBulkPayment, OUTSTANDING, OLDEST_FIRST, NET_OWED } from '../services/supplierPaymentService.js';
 
 
 function bulkToDTO(b, paymentsById = new Map()) {
@@ -20,6 +20,7 @@ function bulkToDTO(b, paymentsById = new Map()) {
     supplier: b.supplier,
     supplierName: b.supplierName,
     amount: fromCents(b.amountCents),
+    discount: fromCents(b.discountCents || 0),
     selectedOwed: fromCents(b.selectedOwedCents),
     percentage: b.percentage,
     paymentAccount: b.paymentAccount,
@@ -34,6 +35,7 @@ function bulkToDTO(b, paymentsById = new Map()) {
         purchaseNumber: a.purchaseNumber,
         payment: a.payment,
         amount: fromCents(a.amountCents),
+        discount: !!a.discount,
         previousBalance: fromCents(a.previousBalanceCents),
         newBalance: fromCents(a.newBalanceCents),
         status: a.newBalanceCents <= 0 ? 'Paid' : 'Partial',
@@ -52,13 +54,9 @@ function bulkToDTO(b, paymentsById = new Map()) {
 }
 
 // GET /api/purchases/bulk-payments/suppliers -- suppliers that are owed
-// money, with how much and on how many invoices.
+// money (net of any credit they hold), with how much and on how many invoices.
 export const listOwedSuppliers = asyncHandler(async (req, res) => {
-  const rows = await Purchase.aggregate([
-    { $match: OUTSTANDING },
-    { $group: { _id: '$supplier', name: { $first: '$supplierName' }, owedCents: { $sum: '$balanceCents' }, invoiceCount: { $sum: 1 } } },
-    { $sort: { name: 1 } },
-  ]);
+  const rows = await Purchase.aggregate([...NET_OWED, { $sort: { name: 1 } }]);
   res.json({ success: true, data: rows.map((r) => ({ id: r._id, name: r.name, owed: fromCents(r.owedCents), invoiceCount: r.invoiceCount })) });
 });
 
@@ -90,7 +88,7 @@ export const createBulkPayment = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
   if (!supplierId) throw new ApiError(400, 'Select a supplier.');
   if (!Array.isArray(purchaseIds) || purchaseIds.length === 0) throw new ApiError(400, 'Select at least one invoice to pay.');
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, 'Amount to pay must be greater than zero.');
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Amount to pay must be greater than zero.');
   if (!paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
   if (String(note).length > 500) throw new ApiError(400, 'Note is too long (500 characters max).');
   if (String(receiptNo).length > 60) throw new ApiError(400, 'Receipt number is too long (60 characters max).');
@@ -98,9 +96,13 @@ export const createBulkPayment = asyncHandler(async (req, res) => {
   if (percentage !== null && (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100)) throw new ApiError(400, 'Percentage must be between 0 and 100.');
   const paymentDate = parsePaymentDate(req.body.paymentDate);
   const amountCents = toCents(amount);
+  // A discount the supplier gave (owed 1000, paid 800, 200 off).
+  const discount = req.body.discount == null || req.body.discount === '' ? 0 : Number(req.body.discount);
+  if (!Number.isFinite(discount) || discount < 0 || !Number.isSafeInteger(toCents(discount))) throw new ApiError(400, 'Enter a valid discount.');
+  const discountCents = toCents(discount);
 
   const result = await runInTransaction(async (session) => {
-    return paySupplier(session, { supplierId, purchaseIds, amountCents, paymentAccountId, paymentDate, note, percentage, receiptNo, user: req.user });
+    return paySupplier(session, { supplierId, purchaseIds, amountCents, discountCents, paymentAccountId, paymentDate, note, percentage, receiptNo, user: req.user });
   });
 
   await logAudit({
@@ -132,7 +134,7 @@ export const getBulkPayment = asyncHandler(async (req, res) => {
 export const updatePurchasePayment = asyncHandler(async (req, res) => {
   const { paymentAccountId } = req.body;
   const amount = Number(req.body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, 'Amount must be greater than zero.');
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Amount must be greater than zero.');
   if (!paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
   if (req.body.note != null && String(req.body.note).length > 500) throw new ApiError(400, 'Note is too long (500 characters max).');
   const newAmountCents = toCents(amount);

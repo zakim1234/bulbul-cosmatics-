@@ -25,7 +25,9 @@ const inventoryItemSchema = new mongoose.Schema(
     barcode: { type: String, trim: true, default: '' },
     category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', default: null },
     description: { type: String, default: '' },
-    quantity: { type: Number, required: true, default: 0, min: 0 }, // physical on-hand stock
+    // Physical on-hand stock. Below zero when more was sold than was in stock
+    // (sold ahead of receiving it); the next stock received makes it up first.
+    quantity: { type: Number, required: true, default: 0 },
     // Held by DRAFT sales so two draft invoices can never both promise the
     // same unit. Physical `quantity` is only ever decremented when a draft
     // is CONFIRMED (Close Day) -- never at draft creation time.
@@ -66,7 +68,8 @@ inventoryItemSchema.index({ category: 1 });
 inventoryItemSchema.index({ expiryDate: 1 });
 
 inventoryItemSchema.virtual('availableQuantity').get(function computeAvailable() {
-  return Math.max(0, this.quantity - (this.reservedQuantity || 0));
+  // Below zero when sold ahead of stock: shown as it is (-200), not as 0.
+  return this.quantity < 0 ? this.quantity - (this.reservedQuantity || 0) : Math.max(0, this.quantity - (this.reservedQuantity || 0));
 });
 
 inventoryItemSchema.virtual('stockStatus').get(function computeStockStatus() {

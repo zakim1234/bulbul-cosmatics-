@@ -7,13 +7,13 @@ import { fromCents } from '../utils/money.js';
 import InventoryItem from '../models/InventoryItem.js';
 import InventoryLot from '../models/InventoryLot.js';
 import StockAdjustment from '../models/StockAdjustment.js';
-import { createStockAdjustment, createStockCount } from '../services/stockAdjustmentService.js';
+import { createStockAdjustment, createStockCount, reverseAdjustmentSave } from '../services/stockAdjustmentService.js';
 import { escapeRegex } from '../services/stockReceiptService.js';
 import { logAudit } from '../services/auditService.js';
 
 const router = Router();
 router.use(requireAuth);
-router.use(requirePermission('stock'));
+router.use(requirePermission('stockAdjustments'));
 
 function toDTO(a) {
   return {
@@ -34,9 +34,76 @@ function toDTO(a) {
     lots: a.lots.map((l) => ({ lot: l.lot, stockSerial: l.stockSerial, expiryDate: l.expiryDate, quantity: l.quantity })),
     createdByName: a.createdByName,
     countNumber: a.countNumber || '',
+    status: a.status || 'POSTED',
+    reversedAt: a.reversedAt || null,
+    reversedByName: a.reversedByName || '',
+    reverseReason: a.reverseReason || '',
     createdAt: a.createdAt,
   };
 }
+
+// GET /api/stock-adjustments/document/:number -- one save as a statement:
+// every item adjusted together in it (a stock count / Adjust All Items
+// save, BADJ-...), or the single adjustment (ADJ-...), with the totals.
+router.get('/document/:number', asyncHandler(async (req, res) => {
+  const number = String(req.params.number || '').trim().slice(0, 40);
+  let rows = await StockAdjustment.find({ countNumber: number }).sort({ createdAt: 1, _id: 1 });
+  if (!rows.length) rows = await StockAdjustment.find({ adjustmentNumber: number });
+  if (!rows.length) throw new ApiError(404, 'Adjustment not found.');
+  const sum = (dir) => rows.filter((r) => r.direction === dir).reduce((t, r) => t + r.valueCents, 0);
+  res.json({
+    success: true,
+    data: {
+      number,
+      isCount: !!rows[0].countNumber && rows[0].countNumber === number,
+      date: rows[0].createdAt,
+      by: rows[0].createdByName || '',
+      note: rows[0].note || '',
+      undone: rows.every((r) => r.status === 'REVERSED'),
+      undoneAt: rows[0].reversedAt || null,
+      undoneBy: rows[0].reversedByName || '',
+      undoReason: rows[0].reverseReason || '',
+      rows: rows.map(toDTO),
+      totals: { items: rows.length, writtenOff: fromCents(sum('DECREASE')), addedBack: fromCents(sum('INCREASE')), netLoss: fromCents(sum('DECREASE') - sum('INCREASE')) },
+    },
+  });
+}));
+
+
+// POST /api/stock-adjustments/:number/reverse { reason } -- admin/manager:
+// undo a whole save (BADJ-...) or one adjustment (ADJ-...) so it can be done
+// again. Stock goes back; the save stays on record, marked undone.
+router.post('/:number/reverse', requireRole('admin', 'manager'), asyncHandler(async (req, res) => {
+  const rows = await runInTransaction((session) => reverseAdjustmentSave(session, { number: req.params.number, reason: req.body.reason, user: req.user }));
+  await logAudit({
+    user: req.user,
+    action: 'stock.adjustment_undone',
+    entityType: 'StockAdjustment',
+    entityId: rows[0]._id,
+    details: { number: req.params.number, items: rows.length, reason: String(req.body.reason || '').slice(0, 500) },
+  });
+  res.json({ success: true, data: { number: req.params.number, undone: rows.length } });
+}));
+
+// DELETE /api/stock-adjustments/:number -- admin/manager: remove a save
+// (BADJ-...) or one adjustment (ADJ-...) from the list for good. If it was
+// not undone yet, it is undone first (the stock goes back), so deleting never
+// leaves the stock wrong.
+router.delete('/:number', requirePermission('deleteStockAdjustments'), asyncHandler(async (req, res) => {
+  const key = String(req.params.number || '').trim();
+  const removed = await runInTransaction(async (session) => {
+    let rows = await StockAdjustment.find({ countNumber: key }).session(session);
+    if (!rows.length) rows = await StockAdjustment.find({ adjustmentNumber: key }).session(session);
+    if (!rows.length) throw new ApiError(404, 'Adjustment not found.');
+    if (rows.some((r) => r.status !== 'REVERSED')) {
+      await reverseAdjustmentSave(session, { number: key, reason: 'Deleted', user: req.user });
+    }
+    await StockAdjustment.deleteMany({ _id: { $in: rows.map((r) => r._id) } }, { session });
+    return rows.map((r) => ({ number: r.adjustmentNumber, item: r.itemName, quantity: r.quantity, direction: r.direction }));
+  });
+  await logAudit({ user: req.user, action: 'stock.adjustment_deleted', entityType: 'StockAdjustment', details: { number: key, rows: removed } });
+  res.json({ success: true, data: { number: key, deleted: removed.length } });
+}));
 
 // GET /api/stock-adjustments?q=&direction=&reason=&from=&to=&page=
 router.get('/', asyncHandler(async (req, res) => {
@@ -52,6 +119,68 @@ router.get('/', asyncHandler(async (req, res) => {
   }
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 50;
+  const sumsFor = () => StockAdjustment.aggregate([{ $match: { ...filter, status: { $ne: 'REVERSED' } } }, { $group: { _id: '$direction', cents: { $sum: '$valueCents' }, count: { $sum: 1 } } }]);
+  const summaryOf = (sums) => {
+    const sum = (dir) => sums.find((s) => s._id === dir) || { cents: 0, count: 0 };
+    return {
+      decreaseValue: fromCents(sum('DECREASE').cents),
+      decreaseCount: sum('DECREASE').count,
+      increaseValue: fromCents(sum('INCREASE').cents),
+      increaseCount: sum('INCREASE').count,
+      netLoss: fromCents(sum('DECREASE').cents - sum('INCREASE').cents),
+    };
+  };
+
+  // ?group=save -- one line per save: everything adjusted together (a stock
+  // count, one BADJ number) is one line; a single adjustment is its own line.
+  // A save shows if any of its lines matches the filters; its totals are the
+  // whole save.
+  if (req.query.group === 'save') {
+    const saveKey = { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$countNumber', ''] } }, 0] }, '$countNumber', '$adjustmentNumber'] };
+    const [[keysPage], sums] = await Promise.all([
+      StockAdjustment.aggregate([
+        { $match: filter },
+        { $group: { _id: saveKey, last: { $max: '$createdAt' } } },
+        { $sort: { last: -1, _id: -1 } },
+        { $facet: { keys: [{ $skip: (page - 1) * limit }, { $limit: limit }], total: [{ $count: 'n' }] } },
+      ]),
+      sumsFor(),
+    ]);
+    const keys = keysPage.keys.map((k) => k._id);
+    const total = keysPage.total[0]?.n || 0;
+    const rows = keys.length
+      ? await StockAdjustment.find({ $or: [{ countNumber: { $in: keys } }, { adjustmentNumber: { $in: keys } }] }).sort({ createdAt: 1, _id: 1 })
+      : [];
+    const byKey = new Map(keys.map((k) => [k, []]));
+    for (const r of rows) {
+      const k = r.countNumber && byKey.has(r.countNumber) ? r.countNumber : r.adjustmentNumber;
+      if (byKey.has(k)) byKey.get(k).push(r);
+    }
+    const saves = keys.map((k) => {
+      const list = byKey.get(k) || [];
+      const cents = (dir) => list.filter((r) => r.direction === dir).reduce((t, r) => t + r.valueCents, 0);
+      const first = list[0] || {};
+      return {
+        number: k,
+        isCount: !!first.countNumber && first.countNumber === k,
+        date: first.createdAt,
+        by: first.createdByName || '',
+        note: first.note || '',
+        items: list.length,
+        itemNames: list.map((r) => r.itemName),
+        reasons: [...new Set(list.map((r) => r.reason))],
+        writtenOff: fromCents(cents('DECREASE')),
+        addedBack: fromCents(cents('INCREASE')),
+        netLoss: fromCents(cents('DECREASE') - cents('INCREASE')),
+        undone: list.length > 0 && list.every((r) => r.status === 'REVERSED'),
+        undoneAt: first.reversedAt || null,
+        undoneBy: first.reversedByName || '',
+        undoReason: first.reverseReason || '',
+      };
+    });
+    return res.json({ success: true, data: saves, summary: summaryOf(sums), pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+  }
+
   const [items, total, sums] = await Promise.all([
     StockAdjustment.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
     StockAdjustment.countDocuments(filter),

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, requirePermission } from '../middleware/auth.js';
+import { clearSuppliers } from '../controllers/clearController.js';
 import {
   listSuppliers,
   searchSuppliers,
@@ -13,6 +14,8 @@ import {
 
 const router = Router();
 router.use(requireAuth);
+// Delete every supplier in the branch (Super Admin, see clearController).
+router.post('/clear', clearSuppliers);
 
 // Shared lookup/create surface: needed by Purchase Invoices and the
 // Supplier Invoice archive to pick or create a supplier regardless of

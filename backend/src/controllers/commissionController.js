@@ -3,7 +3,7 @@ import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { fromCents } from '../utils/money.js';
 import { logAudit } from '../services/auditService.js';
-import { previewCommission, payCommission, cancelCommission } from '../services/commissionService.js';
+import { previewCommission, payCommission, cancelCommission, previewCommissionBranches, payCommissionAllBranches } from '../services/commissionService.js';
 
 function toDTO(c) {
   return {
@@ -24,7 +24,7 @@ function toDTO(c) {
     cancelReason: c.cancelReason,
     createdByName: c.createdByName,
     createdAt: c.createdAt,
-    lines: c.lines.map((l) => ({ user: l.user, name: l.name, role: l.role, percent: l.percent, amount: fromCents(l.amountCents) })),
+    lines: c.lines.map((l) => ({ user: l.user, worker: l.worker || null, name: l.name, role: l.role, percent: l.percent, amount: fromCents(l.amountCents) })),
   };
 }
 
@@ -37,10 +37,44 @@ export const commissionPreview = asyncHandler(async (req, res) => {
       type: r.type,
       key: r.key,
       baseProfit: fromCents(r.baseProfitCents),
-      staff: r.staff.map((u) => ({ id: u._id, name: u.name, username: u.username, role: u.role, isSuperAdmin: !!u.isSuperAdmin, branch: u.branch || null })),
+      yearProfit: fromCents(r.yearProfitCents),
+      staff: peopleDTO(r),
       earlier: r.earlier.map(toDTO),
     },
   });
+});
+
+function peopleDTO(r) {
+  return [
+    ...r.staff.map((u) => ({ id: u._id, name: u.name, username: u.username, phone: u.phone || '', role: u.role, isSuperAdmin: !!u.isSuperAdmin, branch: u.branch || null })),
+    ...(r.workers || []).map((w) => ({ id: w._id, name: w.name, phone: w.phone || '', role: 'worker', job: w.job || '', isWorker: true, isSuperAdmin: false, branch: w.branch || null })),
+  ];
+}
+
+// GET /api/commissions/branches-preview -- all branches, each on its own.
+export const commissionBranchesPreview = asyncHandler(async (req, res) => {
+  const rows = await previewCommissionBranches({ type: req.query.type, key: req.query.key });
+  res.json({
+    success: true,
+    data: rows.map((r) => ({
+      branchId: r.branch._id,
+      branchName: r.branch.name,
+      baseProfit: fromCents(r.baseProfitCents),
+      people: peopleDTO(r),
+      accounts: r.accounts.map((a) => ({ id: a._id, name: a.name, balance: fromCents(a.currentBalanceCents || 0) })),
+      earlier: r.earlier.map(toDTO),
+    })),
+  });
+});
+
+// POST /api/commissions/all-branches -- pay many branches at once.
+export const createCommissionAllBranches = asyncHandler(async (req, res) => {
+  const done = await payCommissionAllBranches({ ...req.body, user: req.user });
+  for (const d of done) {
+    await logAudit({ user: req.user, action: 'commission.pay', entityType: 'CommissionPayment', entityId: d.doc._id, details: { period: d.doc.periodKey, total: fromCents(d.doc.totalCents), branch: d.branchName } });
+  }
+  const total = done.reduce((s, d) => s + d.doc.totalCents, 0);
+  res.status(201).json({ success: true, data: { branches: done.map((d) => ({ branchName: d.branchName, total: fromCents(d.doc.totalCents) })), total: fromCents(total) } });
 });
 
 // GET /api/commissions -- every commission payment, newest first.

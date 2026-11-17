@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import Modal from '../../components/ui/Modal.jsx';
 import Button from '../../components/ui/Button.jsx';
-import { Input } from '../../components/ui/Field.jsx';
+import { FormField, Input, Select } from '../../components/ui/Field.jsx';
 import client from '../../api/client.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency, formatDate, formatTime } from '../../utils/format.js';
@@ -22,13 +22,25 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
   const [quantities, setQuantities] = useState({});
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // Where money already paid for the returned pieces goes.
+  const [refundTo, setRefundTo] = useState('ACCOUNT');
+  const [accounts, setAccounts] = useState([]);
+  const [accountId, setAccountId] = useState('');
+  const [reference, setReference] = useState('');
 
   useEffect(() => {
     if (open) {
       setQuantities({});
       setReason('');
+      setRefundTo(sale?.paymentAccount ? 'ACCOUNT' : 'WALLET');
+      setAccountId(sale?.paymentAccount ? String(sale.paymentAccount) : '');
+      setReference('');
+      client
+        .get('/accounts')
+        .then((r) => setAccounts(r.data.data.accounts.filter((a) => a.isActive)))
+        .catch(() => setAccounts([]));
     }
-  }, [open, sale?.id]);
+  }, [open, sale?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!sale) return null;
 
@@ -40,6 +52,11 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
   const isChecked = (item) => qtyOf(item) > 0;
   const previewAmount = lines.reduce((sum, l) => sum + qtyOf(l.item) * l.unitPrice, 0);
   const anySelected = eligibleLines.some((l) => qtyOf(l.item) > 0);
+  // The returned value first comes off what is still owed on the invoice;
+  // wallet-paid money goes back to the wallet; the rest is given back.
+  const offDebt = Math.min(previewAmount, sale.outstanding || 0);
+  const toWalletAsPaid = Math.min(previewAmount - offDebt, sale.walletAmount || 0);
+  const moneyBack = Math.max(0, Math.round((previewAmount - offDebt - toWalletAsPaid) * 100) / 100);
   const allChecked = eligibleLines.length > 0 && eligibleLines.every((l) => isChecked(l.item));
   const someChecked = eligibleLines.some((l) => isChecked(l.item)) && !allChecked;
 
@@ -109,7 +126,18 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
     if (!items) return;
     setSubmitting(true);
     try {
-      const res = await client.post(`/sales/${sale.id}/return`, { items: items.map(({ itemId, quantity }) => ({ itemId, quantity })), reason });
+      if (moneyBack > 0 && refundTo === 'ACCOUNT' && !accountId) {
+        toast.error('Choose the account the money is given back from.');
+        setSubmitting(false);
+        return;
+      }
+      const res = await client.post(`/sales/${sale.id}/return`, {
+        items: items.map(({ itemId, quantity }) => ({ itemId, quantity })),
+        reason,
+        refundTo,
+        accountId: refundTo === 'ACCOUNT' ? accountId : undefined,
+        reference: refundTo === 'ACCOUNT' ? reference : '',
+      });
       toast.success('Items returned. Stock and balances have been reconciled.');
       onReturned();
       onClose();
@@ -146,20 +174,20 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
         }
       >
         <div className="space-y-3">
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-neutral-500">
             Enter how many units of each item the customer is returning. Stock will be restored to inventory and the
             invoice balance, customer debt and account will be reconciled automatically.
           </p>
 
           {showBulkControls && (
-            <div className="flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-3 py-2">
-              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <div className="flex flex-wrap items-center gap-3 rounded-lg bg-neutral-50 px-3 py-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-700">
                 <input
                   type="checkbox"
                   checked={allChecked}
                   ref={(el) => { if (el) el.indeterminate = someChecked; }}
                   onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                  className="h-4 w-4 rounded border-neutral-300 text-brand-600 focus:ring-brand-400"
                 />
                 Select All Items
               </label>
@@ -169,18 +197,18 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
             </div>
           )}
 
-          <div className="overflow-hidden rounded-lg border border-slate-200">
+          <div className="overflow-hidden rounded-lg border border-neutral-200">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="bg-neutral-50">
                 <tr>
                   <th className="w-8 px-3 py-2" />
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-slate-500">Item</th>
-                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-slate-500">Sold</th>
-                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-slate-500">Already Returned</th>
-                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-slate-500">Return Qty</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase text-neutral-500">Item</th>
+                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-neutral-500">Sold</th>
+                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-neutral-500">Already Returned</th>
+                  <th className="px-2 py-2 text-center text-xs font-medium uppercase text-neutral-500">Return Qty</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-neutral-100">
                 {lines.map((l) => (
                   <tr key={l.item} className={l.returnable <= 0 ? 'opacity-50' : ''}>
                     <td className="px-3 py-2">
@@ -189,12 +217,12 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
                         disabled={l.returnable <= 0}
                         checked={isChecked(l.item)}
                         onChange={() => toggleRow(l)}
-                        className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                        className="h-4 w-4 rounded border-neutral-300 text-brand-600 focus:ring-brand-400"
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <p className="font-medium text-slate-800">{l.name}</p>
-                      <p className="text-xs text-slate-400">{formatCurrency(l.unitPrice)} each</p>
+                      <p className="font-medium text-neutral-800">{l.name}</p>
+                      <p className="text-xs text-neutral-400">{formatCurrency(l.unitPrice)} each</p>
                     </td>
                     <td className="px-2 py-2 text-center tabular-nums">{l.quantity}</td>
                     <td className="px-2 py-2 text-center tabular-nums">{l.returnedQuantity || 0}</td>
@@ -216,10 +244,54 @@ export default function ReturnItemsModal({ open, onClose, sale, onReturned }) {
             </table>
           </div>
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" />
-          <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold">
+          <div className="flex justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm font-semibold">
             <span>Return Value</span>
             <span className="tabular-nums">{formatCurrency(previewAmount)}</span>
           </div>
+          {previewAmount > 0 && (offDebt > 0 || toWalletAsPaid > 0) && (
+            <p className="px-1 text-xs text-neutral-500">
+              {offDebt > 0 && `${formatCurrency(offDebt)} comes off what is still owed on this invoice. `}
+              {toWalletAsPaid > 0 && `${formatCurrency(toWalletAsPaid)} was paid from the wallet and goes back to it.`}
+            </p>
+          )}
+          {moneyBack > 0 && (
+            <div className="space-y-3 rounded-xl border border-brand-200 bg-brand-50/50 p-3">
+              <p className="text-sm font-semibold text-neutral-900">{formatCurrency(moneyBack)} was already paid — where does it go?</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  ['ACCOUNT', 'Give it back to the customer', 'Out of the account you choose'],
+                  ['WALLET', "Put it in the customer's wallet", 'Credit they can use later'],
+                ].map(([value, title, text]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setRefundTo(value)}
+                    className={`rounded-xl border p-3 text-left ${refundTo === value ? 'border-brand-400 bg-white ring-1 ring-brand-500' : 'border-neutral-200 bg-white/60 hover:bg-white'}`}
+                  >
+                    <span className="block text-sm font-semibold text-neutral-900">{title}</span>
+                    <span className="block text-xs text-neutral-500">{text}</span>
+                  </button>
+                ))}
+              </div>
+              {refundTo === 'ACCOUNT' && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Account">
+                    <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                      <option value="">Choose an account…</option>
+                      {accounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  <FormField label="Number the money was sent to">
+                    <Input value={reference} maxLength={100} onChange={(e) => setReference(e.target.value)} placeholder="e.g. 615123456" />
+                  </FormField>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
 

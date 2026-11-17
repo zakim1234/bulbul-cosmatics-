@@ -5,10 +5,11 @@ import client from '../../api/client.js';
 import { formatCurrency, formatDate, formatDateTime } from '../../utils/format.js';
 import { printReport } from '../../utils/printReport.js';
 import { BUSINESS } from '../../constants/business.js';
+import BusinessContacts from '../../components/docs/BusinessContacts.jsx';
 import { PageSpinner } from '../../components/ui/Spinner.jsx';
 import Button from '../../components/ui/Button.jsx';
 import SharePdfButton from '../../components/SharePdfButton.jsx';
-import logo from '../../images/logo.svg';
+import logo from '../../images/logo.png';
 
 const FILTERS = [
   ['ALL', 'Everything'],
@@ -33,7 +34,7 @@ export default function SupplierStatementPage() {
       .catch((err) => setError(err.friendlyMessage || 'Could not load this statement.'));
   }, [supplierId]);
 
-  if (error) return <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700">{error}</div>;
+  if (error) return <div className="rounded-lg bg-brand-50 p-4 text-sm text-brand-700">{error}</div>;
   if (!data) return <PageSpinner />;
 
   const { supplier, lines, totals } = data;
@@ -42,16 +43,16 @@ export default function SupplierStatementPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 no-print">
-        <Link to={`/purchases?supplier=${supplier.id}`} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <Link to={`/purchases?supplier=${supplier.id}`} className="flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> Back to {supplier.name}
         </Link>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
+          <div className="flex rounded-lg border border-neutral-200/80 bg-white p-0.5">
             {FILTERS.map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setFilter(key)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${filter === key ? 'bg-neutral-900 text-white' : 'text-slate-500 hover:text-slate-800'}`}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold ${filter === key ? 'bg-primary text-white' : 'text-neutral-500 hover:text-neutral-800'}`}
               >
                 {label}
               </button>
@@ -66,19 +67,16 @@ export default function SupplierStatementPage() {
 
       <div
         id="print-area"
-        className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 text-neutral-900 shadow-sm sm:p-8 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
+        className="mx-auto max-w-4xl rounded-2xl border border-neutral-200/80 bg-white p-6 text-neutral-900 sm:p-8 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
         style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
       >
         <div className="flex flex-col items-center text-center">
-          <img src={logo} alt={BUSINESS.name} className="h-16 w-auto object-contain" />
-          <h1 className="mt-1 text-lg font-extrabold uppercase tracking-[0.2em]">{BUSINESS.name}</h1>
-          <p className="text-[11px] text-neutral-600">
-            {BUSINESS.addressLine} · {BUSINESS.phone}
-          </p>
+          <img src={logo} alt={BUSINESS.name} className="h-24 w-auto object-contain" />
+          <BusinessContacts className="mt-2" />
         </div>
 
-        <div className="mt-4 h-1 bg-brand-600" />
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-neutral-950 px-4 py-2 text-white">
+        <div className="mt-4 h-1 bg-gradient-to-r from-brand-500 to-emerald-500" />
+        <div className="flex flex-wrap items-center justify-between gap-2 surface-blue px-4 py-2 text-white">
           <p className="text-sm font-bold uppercase tracking-[0.25em]">Supplier Statement</p>
           <p className="text-[11px]">
             Date: <span className="font-semibold">{formatDate(data.asOf)}</span>
@@ -166,11 +164,11 @@ export default function SupplierStatementPage() {
             <p className="text-[10px] uppercase tracking-wider text-neutral-500">Total goods taken</p>
             <p className="mt-1 text-lg font-bold">{formatCurrency(totals.bought)}</p>
           </div>
-          <div className="rounded-lg bg-brand-600 px-4 py-3 text-center text-white">
-            <p className="text-[10px] uppercase tracking-wider text-white/80">Total paid</p>
+          <div className="rounded-lg bg-primary px-4 py-3 text-center text-white">
+            <p className="text-[10px] uppercase tracking-wider text-neutral-700">Total paid</p>
             <p className="mt-1 text-lg font-bold">{formatCurrency(totals.paid)}</p>
           </div>
-          <div className="rounded-lg bg-neutral-950 px-4 py-3 text-center text-white">
+          <div className="rounded-lg surface-blue px-4 py-3 text-center text-white">
             <p className="text-[10px] uppercase tracking-wider text-neutral-400">Remaining owed</p>
             <p className="mt-1 text-lg font-bold">{formatCurrency(totals.remaining)}</p>
           </div>

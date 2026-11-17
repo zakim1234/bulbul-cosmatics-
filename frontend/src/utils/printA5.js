@@ -4,7 +4,8 @@
 export function printA5() {
   const style = document.createElement('style');
   style.id = 'a5-print-style';
-  style.textContent = '@page { size: A5; margin: 8mm; }';
+  // Top/bottom margin 0: no room for the browser's page link and date.
+  style.textContent = '@page { size: A5; margin: 0 8mm; } body { padding: 8mm 0 !important; }';
   document.head.appendChild(style);
 
   const cleanup = () => {

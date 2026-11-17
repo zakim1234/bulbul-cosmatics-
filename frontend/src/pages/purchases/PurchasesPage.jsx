@@ -1,8 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Ban, Search, Pencil, Trash2, Sheet, Wallet, FileText, ArrowLeft, ChevronDown, ExternalLink } from 'lucide-react';
+import { Ban, Search, Pencil, Trash2, Sheet, Wallet, FileText, ArrowLeft, ChevronDown, ExternalLink, Plus, Rows3 } from 'lucide-react';
 import client from '../../api/client.js';
+import { fetchAll } from '../../api/fetchAll.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { hasPermission, showBulkTools } from '../../constants/permissions.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { useDebounce } from '../../hooks/useDebounce.js';
 import { formatCurrency, formatDate } from '../../utils/format.js';
@@ -10,14 +12,16 @@ import PageHeader from '../../components/ui/PageHeader.jsx';
 import Button from '../../components/ui/Button.jsx';
 import { Input, Select } from '../../components/ui/Field.jsx';
 import { Table, THead, Th, TBody, Td, TableEmpty, TableLoading } from '../../components/ui/Table.jsx';
-import Pagination from '../../components/ui/Pagination.jsx';
 import Badge from '../../components/ui/Badge.jsx';
 import ConfirmDialog from '../../components/ui/ConfirmDialog.jsx';
 import BulkPaymentModal from './BulkPaymentModal.jsx';
 import PurchaseEditModal from './PurchaseEditModal.jsx';
+import SupplierOpeningBalanceModal from './SupplierOpeningBalanceModal.jsx';
+import ClearAllButton from '../../components/ClearAllButton.jsx';
+import ImportExcelButton from '../../components/ImportExcelButton.jsx';
 
-const ACTION = 'flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50';
-const ACTION_DANGER = 'flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50';
+const ACTION = 'flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs font-semibold text-neutral-600 hover:bg-neutral-50';
+const ACTION_DANGER = 'flex items-center gap-1 rounded-lg border border-brand-200 px-2 py-1 text-xs font-semibold text-brand-600 hover:bg-brand-50';
 
 const initials = (name = '') =>
   name
@@ -44,37 +48,42 @@ export default function PurchasesPage() {
   const [q, setQ] = useState('');
   const debouncedQ = useDebounce(q, 300);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
   const [voidItem, setVoidItem] = useState(null);
   const [voiding, setVoiding] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [deleteItem, setDeleteItem] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Only the newest answer of each kind is shown: on a slow line an older
+  // request can come back after a newer one and would otherwise put the old
+  // list back on screen (a just-saved invoice "disappears" until a refresh).
+  const latest = useRef({ suppliers: 0, list: 0, groups: {} });
+
   const loadSuppliers = useCallback(() => {
+    const ticket = ++latest.current.suppliers;
     client
       .get('/purchases/suppliers-summary')
-      .then((res) => setSuppliers(res.data.data))
-      .catch(() => setSuppliers([]));
+      .then((res) => ticket === latest.current.suppliers && setSuppliers(res.data.data))
+      .catch(() => ticket === latest.current.suppliers && setSuppliers([]));
   }, []);
 
   const load = useCallback(() => {
+    const ticket = ++latest.current.list;
     setLoading(true);
-    client
-      .get('/purchases', {
-        params: {
-          page,
-          limit: 20,
-          q: debouncedQ || undefined,
-          supplier: supplierId || undefined,
-          sort: supplierId ? undefined : 'supplier',
-        },
-      })
+    fetchAll('/purchases', {
+      q: debouncedQ || undefined,
+      supplier: supplierId || undefined,
+      sort: supplierId ? undefined : 'supplier',
+    })
+      .then((data) => ({ data }))
       .then((res) => {
+        if (ticket !== latest.current.list) return;
         setItems(res.data.data);
         setPagination(res.data.pagination);
       })
-      .catch((err) => toast.error(err.friendlyMessage || 'Failed to load purchases.'))
-      .finally(() => setLoading(false));
+      .catch((err) => ticket === latest.current.list && toast.error(err.friendlyMessage || 'Failed to load purchases.'))
+      .finally(() => ticket === latest.current.list && setLoading(false));
   }, [page, debouncedQ, supplierId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setPage(1), [debouncedQ, supplierId]);
@@ -88,10 +97,12 @@ export default function PurchasesPage() {
   const [groupItems, setGroupItems] = useState({}); // supplierId -> invoices (undefined while loading)
 
   const loadGroup = (sid) => {
+    const ticket = (latest.current.groups[sid] || 0) + 1;
+    latest.current.groups[sid] = ticket;
     client
       .get('/purchases', { params: { supplier: sid, limit: 500 } })
-      .then((res) => setGroupItems((g) => ({ ...g, [sid]: res.data.data })))
-      .catch((err) => toast.error(err.friendlyMessage || 'Failed to load invoices.'));
+      .then((res) => ticket === latest.current.groups[sid] && setGroupItems((g) => ({ ...g, [sid]: res.data.data })))
+      .catch((err) => ticket === latest.current.groups[sid] && toast.error(err.friendlyMessage || 'Failed to load invoices.'));
   };
 
   const toggleGroup = (sid) => {
@@ -147,15 +158,20 @@ export default function PurchasesPage() {
   };
 
   const invoiceRow = (p) => (
-    <tr key={p.id} className="hover:bg-slate-50">
+    <tr key={p.id} className="hover:bg-neutral-50">
       <Td>
         <Link to={`/purchases/${p.id}`} className="whitespace-nowrap font-medium text-brand-600 hover:underline">
           {p.purchaseNumber}
         </Link>
-        {p.supplierInvoiceNumber && <div className="text-xs text-slate-400">Supplier #{p.supplierInvoiceNumber}</div>}
+        {p.isOpeningBalance && (
+          <span className="ml-2">
+            <Badge color="blue">Opening</Badge>
+          </span>
+        )}
+        {p.supplierInvoiceNumber && <div className="text-xs text-neutral-400">Supplier #{p.supplierInvoiceNumber}</div>}
       </Td>
       <Td className="whitespace-nowrap">
-        <span className={p.status === 'voided' ? 'text-slate-400 line-through' : 'font-medium text-slate-900'}>{formatCurrency(p.totalCost)}</span>
+        <span className={p.status === 'voided' ? 'text-neutral-400 line-through' : 'font-medium text-neutral-900'}>{formatCurrency(p.totalCost)}</span>
         {p.status === 'voided' && (
           <span className="ml-2">
             <Badge color="red">Voided</Badge>
@@ -188,19 +204,19 @@ export default function PurchasesPage() {
   const groupHeader = (sid, name, { toggle = false, open = false } = {}) => {
     const s = bySupplier.get(sid);
     return (
-      <tr key={`h-${sid}`} className={`border-t-2 border-slate-200 ${open ? 'bg-neutral-100' : 'bg-neutral-50 hover:bg-neutral-100'}`}>
+      <tr key={`h-${sid}`} className={`border-t-2 border-neutral-200 ${open ? 'bg-neutral-100' : 'bg-neutral-50 hover:bg-neutral-100'}`}>
         <td colSpan={cols} className="px-4 py-2.5">
           <div className="flex w-full items-center gap-2.5">
             <button onClick={() => (toggle ? toggleGroup(sid) : pickSupplier(sid))} className="group flex min-w-0 flex-1 items-center gap-2.5 text-left">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-[11px] font-bold text-white">{initials(name)}</span>
-              <span className="truncate font-semibold text-slate-900 group-hover:text-brand-600">{name}</span>
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full surface-blue text-[11px] font-bold">{initials(name)}</span>
+              <span className="truncate font-semibold text-neutral-900 group-hover:text-brand-600">{name}</span>
               {s && (
-                <span className="shrink-0 text-xs text-slate-500">
+                <span className="shrink-0 text-xs text-neutral-500">
                   {s.invoiceCount} invoice{s.invoiceCount === 1 ? '' : 's'}
                 </span>
               )}
               {s && (
-                <span className={`ml-auto shrink-0 text-xs font-semibold ${s.owed > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                <span className={`ml-auto shrink-0 text-xs font-semibold ${s.owed > 0 ? 'text-brand-600' : 'text-neutral-400'}`}>
                   {s.owed > 0 ? `Owed ${formatCurrency(s.owed)}` : 'Paid up'}
                 </span>
               )}
@@ -255,9 +271,30 @@ export default function PurchasesPage() {
         subtitle="Goods invoices by supplier — added automatically from Supplier Invoices (Manual Entry)"
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => navigate('/purchases/vendor-balances')}>
-              <Sheet className="h-4 w-4" /> Vendor Balances
-            </Button>
+            <ClearAllButton
+              what="all purchase invoices"
+              warning="Payments made on them are cancelled and the money goes back to the account it was paid from. Stock already received stays in Inventory."
+              url="/purchases/clear"
+              describe={(d) => `Deleted ${d.purchases || 0} purchase invoice(s)${d.refunded ? `; ${d.refunded.toFixed(2)} returned to accounts` : ''}.`}
+              onDone={reload}
+            />
+            {hasPermission(user, 'openingBalances') && <ImportExcelButton to="/purchases/opening-balances/bulk" />}
+            {/* Opening Balance + its sheet: Super Admin, once switched on in Settings. */}
+            {showBulkTools(user) && hasPermission(user, 'openingBalances') && (
+              <>
+                <Button variant="secondary" onClick={() => setOpeningOpen(true)}>
+                  <Plus className="h-4 w-4" /> Opening Balance
+                </Button>
+                <Button variant="secondary" onClick={() => navigate('/purchases/opening-balances/bulk')}>
+                  <Rows3 className="h-4 w-4" /> Opening Balances Sheet
+                </Button>
+              </>
+            )}
+            {hasPermission(user, 'vendorBalances') && (
+              <Button variant="secondary" onClick={() => navigate('/purchases/vendor-balances')}>
+                <Sheet className="h-4 w-4" /> Vendor Balances
+              </Button>
+            )}
           </div>
         }
       />
@@ -266,16 +303,16 @@ export default function PurchasesPage() {
           {supplierId && (
             <button
               onClick={() => pickSupplier('')}
-              className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-neutral-200/80 bg-white px-3 py-1.5 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
             >
               <ArrowLeft className="h-4 w-4" /> Back to all suppliers
             </button>
           )}
           {selected && (
-            <div className="mb-4 overflow-hidden rounded-2xl bg-bulbul text-white shadow-sm">
+            <div className="mb-4 overflow-hidden rounded-2xl surface-blue text-white shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-4">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-600 text-sm font-bold">{initials(selected.name)}</span>
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">{initials(selected.name)}</span>
                   <div>
                     <h2 className="text-lg font-bold">{selected.name}</h2>
                     <p className="text-xs text-neutral-400">
@@ -289,7 +326,7 @@ export default function PurchasesPage() {
                 <Button variant="secondary" onClick={() => navigate(`/purchases/suppliers/${selected.id}/statement`)}>
                   <FileText className="h-4 w-4" /> Statement
                 </Button>
-                {selected.owed > 0 && (
+                {selected.owed > 0 && hasPermission(user, 'paySuppliers') && (
                   <Button onClick={() => setBulkOpen(true)}>
                     <Wallet className="h-4 w-4" /> Pay this supplier
                   </Button>
@@ -306,7 +343,7 @@ export default function PurchasesPage() {
 
           <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="relative sm:col-span-2">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
               <Input
                 className="pl-9"
                 placeholder={selected ? `Search ${selected.name} invoices...` : 'Search by invoice number or supplier...'}
@@ -350,13 +387,26 @@ export default function PurchasesPage() {
             </TBody>
           </Table>
           {!collapsedView && (
-            <div className="rounded-b-xl border border-t-0 border-slate-200 bg-white">
-              <Pagination {...pagination} onChange={setPage} />
+            <div className="rounded-b-xl border border-t-0 border-neutral-200/80 bg-white">
             </div>
           )}
       </div>
 
       <PurchaseEditModal purchase={editItem} onClose={() => setEditItem(null)} onSaved={reload} />
+      <SupplierOpeningBalanceModal
+        open={openingOpen}
+        initialSupplier={selected ? { id: selected.id, name: selected.name } : null}
+        onClose={() => setOpeningOpen(false)}
+        onSaved={(p) => {
+          // The supplier list (totals, owed) changes too -- also when the
+          // balance belongs to a supplier other than the one on screen.
+          if (String(p.supplier) === supplierId) reload();
+          else {
+            loadSuppliers();
+            pickSupplier(String(p.supplier));
+          }
+        }}
+      />
       <ConfirmDialog
         open={!!deleteItem}
         title="Delete Purchase Invoice"

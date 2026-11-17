@@ -48,27 +48,21 @@ test('POS QUICK-CREATE -- permission gate, item + opening stock in one step, val
     assert.equal(created.status, 201, JSON.stringify(created));
     assert.equal(created.data.name, 'Zinc Tablets', 'name is trimmed and whitespace-collapsed');
     assert.match(created.data.itemCode, /^ITM-\d{6}$/);
-    assert.equal(created.data.quantity, 12);
-    assert.equal(created.data.availableQuantity, 12);
+    // Made with no stock: stock comes in only on a Supplier Invoice.
+    assert.equal(created.data.quantity, 0);
     assert.equal(created.data.sellingPrice, 2.5);
     assert.equal(created.data.costPrice, 1.2);
 
-    // It really is in Stock: item quantity, Weighted Average Cost seeded from the typed cost, a lot, and a Stock Entry.
+    // The item, its cost and price -- but no stock and no batch (nothing that is not owed for).
     const item = await InventoryItem.findById(created.data.id);
-    assert.equal(item.quantity, 12);
+    assert.equal(item.quantity, 0);
     assert.equal(item.costPriceCents, 120);
     assert.equal(item.sellingPriceCents, 250);
     assert.equal(String(item.category), category.id);
-    assert.equal(item.stockEvents.length, 1);
-    assert.equal(item.stockEvents[0].quantityAfter, 12);
-    assert.equal(item.stockEvents[0].averageCostAfterCents, 120);
-    const lots = await InventoryLot.find({ item: item._id });
-    assert.equal(lots.length, 1);
-    assert.equal(lots[0].remainingQuantity, 12);
-    assert.equal(lots[0].unitCostCents, 120);
+    assert.equal(await InventoryLot.countDocuments({ item: item._id }), 0);
     const entries = await StockEntry.find();
     assert.equal(entries.length, 1);
-    assert.equal(entries[0].rows.length, 1);
+    assert.equal(entries[0].rows[0].quantity, 0);
     assert.equal(String(entries[0].createdBy), String(trusted._id));
     const audit = await AuditLog.findOne({ action: 'inventory.quickCreate' });
     assert.equal(audit.userName, 'Trusted Cashier');
@@ -88,10 +82,6 @@ test('POS QUICK-CREATE -- permission gate, item + opening stock in one step, val
       { ...good, name: 'Bad A', sellingPrice: '' },
       { ...good, name: 'Bad B', sellingPrice: -1 },
       { ...good, name: 'Bad C', sellingPrice: 'abc' },
-      { ...good, name: 'Bad D', initialQuantity: 0 },
-      { ...good, name: 'Bad E', initialQuantity: 1.5 },
-      { ...good, name: 'Bad F', initialQuantity: -3 },
-      { ...good, name: 'Bad G', initialQuantity: undefined },
       { ...good, name: 'Bad H', cost: -1 },
       { ...good, name: 'Bad I', categoryId: new mongoose.Types.ObjectId().toString() },
     ];
@@ -107,14 +97,13 @@ test('POS QUICK-CREATE -- permission gate, item + opening stock in one step, val
     const dupInactive = await request('/quick-items', { name: 'gauze roll', sellingPrice: 1, initialQuantity: 1 });
     assert.equal(dupInactive.status, 409);
     assert.match(dupInactive.message, /inactive/i);
-    assert.equal((await InventoryItem.findById(created.data.id)).quantity, 12, 'the existing item was not topped up');
+    assert.equal((await InventoryItem.findById(created.data.id)).quantity, 0, 'the existing item was not topped up');
     assert.equal(await StockEntry.countDocuments(), entriesBefore);
 
-    // The new item behaves like any other in a sale: it can be sold up to what was stocked, not beyond.
-    const sold = await request('/sales', { customerId: customer.id, items: [{ itemId: created.data.id, quantity: 12 }] }, 'POST', trusted);
-    assert.equal(sold.status, 201, JSON.stringify(sold));
-    const oversold = await request('/sales', { customerId: customer.id, items: [{ itemId: created.data.id, quantity: 1 }] }, 'POST', trusted);
-    assert.equal(oversold.status, 409, 'all 12 units are reserved by the first draft');
+    // The new item sells like any other -- ahead of stock until its Supplier Invoice comes.
+    const ahead = await request('/sales', { customerId: customer.id, items: [{ itemId: created.data.id, quantity: 1 }] }, 'POST', trusted);
+    assert.equal(ahead.status, 201, 'sold ahead of stock');
+    assert.equal((await InventoryItem.findById(created.data.id)).quantity, -1);
 
     // Regression: the Stock page (same shared receipt code) still creates and tops up items,
     // and does not honour a categoryId smuggled into its rows.

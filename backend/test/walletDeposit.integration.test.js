@@ -143,7 +143,7 @@ test('WALLET DEPOSIT -- no debt: behaves exactly as before, entire deposit becom
 // A credit sale created while the wallet was empty, with money deposited
 // before Close Day confirms it: Close Day must take the debt from the
 // wallet instead of leaving the customer owing while holding credit.
-test('WALLET AUTO-PAY -- Close Day covers a credit sale from wallet money deposited after the Draft', { timeout: 90000 }, async () => {
+test('WALLET -- money deposited after a credit sale pays that debt first, the rest goes to the wallet', { timeout: 90000 }, async () => {
   const { admin, server, request } = await setup('autopay_close');
   try {
     const customer = await Customer.create({ name: 'Cumar', phone: '444', walletAutoPay: true });
@@ -153,20 +153,15 @@ test('WALLET AUTO-PAY -- Close Day covers a credit sale from wallet money deposi
     const sale = await request('/sales', { customerId: customer.id, items: [{ itemId: item.id, quantity: 5 }], paidAmount: 0 }); // $50 credit
     assert.equal(sale.status, 201, JSON.stringify(sale));
     const deposit = await request(`/customers/${customer.id}/wallet/deposit`, { amount: 90, paymentAccountId: account.id });
-    assert.equal(deposit.data.walletCredited, 90, 'Draft is not debt yet, so all of it reaches the wallet');
+    // The sale is debt at once (no Pending), so the deposit clears it first.
+    assert.deepEqual([deposit.data.debtCleared, deposit.data.walletCredited], [50, 40], JSON.stringify(deposit.data));
 
     await closeDay({ user: admin });
 
     const after = await Customer.findById(customer.id);
     assert.equal(after.balanceCents, 0, 'no debt left');
     assert.equal(after.walletBalanceCents, 4000, '$90 - $50');
-    const confirmed = await Sale.findById(sale.data.id);
-    assert.equal(confirmed.walletAmountCents, 5000);
-    assert.equal(confirmed.outstandingCents, 0);
-    assert.equal(confirmed.balanceAddedCents, 0);
-    const walletTxn = await CustomerWalletTransaction.findOne({ customer: customer.id, type: 'SALE_PAYMENT' });
-    assert.equal(walletTxn.amountCents, -5000);
-    assert.match(walletTxn.note, /Applied to sale/);
+    assert.equal((await Sale.findById(sale.data.id)).outstandingCents, 0);
 
     // Still reversible, and the reversal gives the $50 back to the wallet.
     const reversed = await request(`/sales/${sale.data.id}/reverse`, { reason: 'test' });

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { useListKeys } from '../../hooks/useListKeys.js';
 import { Search, UserPlus, X, Phone, AlertTriangle } from 'lucide-react';
 import client from '../../api/client.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { hasPermission } from '../../constants/permissions.js';
 import { useDebounce } from '../../hooks/useDebounce.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency } from '../../utils/format.js';
@@ -10,8 +13,11 @@ import Button from '../../components/ui/Button.jsx';
 // The core POS UX requirement: the seller TYPES a customer name (never
 // browses a dropdown). Matches appear live; if none match, a "Create New
 // Customer" action lets the seller add one without leaving the sale.
-export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, cartTotal = 0, paidAmount = 0, walletAmount = 0, searchValue, onSearchChange, enteredCustomer, onEnteredCustomerChange }) {
+export default function CustomerSearchBox({ hideLabel = false, activeCustomer, onSelect, onClear, cartTotal = 0, paidAmount = 0, walletAmount = 0, searchValue, onSearchChange, enteredCustomer, onEnteredCustomerChange }) {
+  const kb = useListKeys();
   const toast = useToast();
+  const { user } = useAuth();
+  const canCreate = hasPermission(user, 'createCustomers');
   const [localQuery, setLocalQuery] = useState('');
   const query = searchValue ?? localQuery;
   const setQuery = onSearchChange || setLocalQuery;
@@ -90,20 +96,20 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-brand-500">Customer</p>
-            <p className="text-lg font-bold text-slate-900">{activeCustomer.name}</p>
+            <p className="text-lg font-bold text-neutral-900">{activeCustomer.name}</p>
             {activeCustomer.phone && (
-              <p className="mt-0.5 flex items-center gap-1 text-sm text-slate-500">
+              <p className="mt-0.5 flex items-center gap-1 text-sm text-neutral-500">
                 <Phone className="h-3.5 w-3.5" /> {activeCustomer.phone}
               </p>
             )}
           </div>
-          <button onClick={onClear} className="rounded-md p-1 text-slate-400 hover:bg-white hover:text-slate-600" title="Change customer">
+          <button onClick={onClear} className="rounded-md p-1 text-neutral-400 hover:bg-white hover:text-neutral-600" title="Change customer">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {hasPreviousDebt && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-rose-100 px-3 py-2 text-rose-700">
+          <div className="mt-3 flex items-center gap-2 rounded-lg bg-brand-100 px-3 py-2 text-brand-700">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <p className="text-sm font-semibold">
               This customer already owes {formatCurrency(previousDebt)} from previous sales.
@@ -113,26 +119,26 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
 
         <div className="mt-3 grid grid-cols-2 gap-2">
           <div className="rounded-lg bg-white px-3 py-2">
-            <p className="text-xs text-slate-400">Previous Debt</p>
-            <p className={`text-base font-bold ${previousDebt > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+            <p className="text-xs text-neutral-400">Previous Debt</p>
+            <p className={`text-base font-bold ${previousDebt > 0 ? 'text-brand-600' : 'text-emerald-600'}`}>
               {formatCurrency(previousDebt)}
             </p>
           </div>
           <div className="rounded-lg bg-white px-3 py-2">
-            <p className="text-xs text-slate-400">Wallet Available</p>
+            <p className="text-xs text-neutral-400">Wallet Available</p>
             <p className="text-base font-bold text-brand-600">{formatCurrency(activeCustomer.walletBalance || 0)}</p>
           </div>
           <div className="rounded-lg bg-white px-3 py-2">
-            <p className="text-xs text-slate-400">Current Cart</p>
-            <p className="text-base font-bold text-slate-800">{formatCurrency(cartTotal)}</p>
+            <p className="text-xs text-neutral-400">Current Cart</p>
+            <p className="text-base font-bold text-neutral-800">{formatCurrency(cartTotal)}</p>
           </div>
           <div className="rounded-lg bg-white px-3 py-2">
-            <p className="text-xs text-slate-400">Current Payment</p>
-            <p className="text-base font-bold text-slate-800">{formatCurrency(paidAmount + walletAmount)}</p>
+            <p className="text-xs text-neutral-400">Current Payment</p>
+            <p className="text-base font-bold text-neutral-800">{formatCurrency(paidAmount + walletAmount)}</p>
           </div>
           <div className="col-span-2 rounded-lg bg-white px-3 py-2">
-            <p className="text-xs text-slate-400">Potential New Balance</p>
-            <p className={`text-base font-bold ${potentialNewBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+            <p className="text-xs text-neutral-400">Potential New Balance</p>
+            <p className={`text-base font-bold ${potentialNewBalance > 0 ? 'text-brand-600' : 'text-emerald-600'}`}>
               {formatCurrency(potentialNewBalance)}
             </p>
           </div>
@@ -143,9 +149,9 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
 
   return (
     <div ref={boxRef} className="relative">
-      <Label>Customer</Label>
+      {!hideLabel && <Label>Customer</Label>}
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
         <Input
           autoFocus
           className="pl-9"
@@ -156,13 +162,14 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
             setShowDropdown(true);
           }}
           onFocus={() => setShowDropdown(true)}
+          onKeyDown={kb.onKeyDown}
         />
       </div>
 
       {showDropdown && query.trim() && (
-        <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+        <div ref={kb.listRef} className="absolute z-20 mt-1 w-full overflow-hidden rounded-xl border border-neutral-200/80 bg-white shadow-lg">
           {searching ? (
-            <div className="px-4 py-3 text-sm text-slate-400">Searching...</div>
+            <div className="px-4 py-3 text-sm text-neutral-400">Searching...</div>
           ) : results.length > 0 ? (
             <ul className="max-h-64 overflow-y-auto">
               {results.map((c) => (
@@ -172,10 +179,10 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
                     className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-brand-50"
                   >
                     <div>
-                      <p className="text-sm font-medium text-slate-800">{c.name}</p>
-                      <p className="text-xs text-slate-400">{c.phone || 'No phone'}</p>
+                      <p className="text-sm font-medium text-neutral-800">{c.name}</p>
+                      <p className="text-xs text-neutral-400">{c.phone || 'No phone'}</p>
                     </div>
-                    <span className={`text-sm font-semibold ${c.balance > 0 ? 'text-rose-600' : 'text-slate-400'}`}>
+                    <span className={`text-sm font-semibold ${c.balance > 0 ? 'text-brand-600' : 'text-neutral-400'}`}>
                       {formatCurrency(c.balance)}
                     </span>
                   </button>
@@ -184,23 +191,25 @@ export default function CustomerSearchBox({ activeCustomer, onSelect, onClear, c
             </ul>
           ) : (
             <div className="px-4 py-3">
-              <p className="mb-2 text-sm text-slate-500">
+              <p className="mb-2 text-sm text-neutral-500">
                 No customer found for "<span className="font-medium">{query}</span>"
               </p>
-              <button
-                onClick={openCreateForm}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100"
-              >
-                <UserPlus className="h-4 w-4" /> Create New Customer "{query}"
-              </button>
+              {canCreate && (
+                <button
+                  onClick={openCreateForm}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-100"
+                >
+                  <UserPlus className="h-4 w-4" /> Create New Customer "{query}"
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {showCreateForm && (
-        <div className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white p-4 shadow-lg">
-          <p className="mb-3 text-sm font-semibold text-slate-800">Create New Customer</p>
+      {canCreate && showCreateForm && (
+        <div className="absolute z-30 mt-1 w-full rounded-xl border border-neutral-200/80 bg-white p-4 shadow-lg">
+          <p className="mb-3 text-sm font-semibold text-neutral-800">Create New Customer</p>
           <form onSubmit={handleCreate} className="space-y-3">
             <Input autoFocus placeholder="Full name" value={newCustomer.name} onChange={(e) => setNewCustomer((c) => ({ ...c, name: e.target.value }))} />
             <Input placeholder="Phone (optional)" value={newCustomer.phone} onChange={(e) => setNewCustomer((c) => ({ ...c, phone: e.target.value }))} />

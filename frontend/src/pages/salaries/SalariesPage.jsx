@@ -1,3 +1,4 @@
+import WorkersPanel from './WorkersPanel.jsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Banknote, CheckCircle2, Eye, History, Printer, Save, Undo2, Wallet, Copy, ScrollText } from 'lucide-react';
@@ -93,9 +94,14 @@ function PayModal({ open, onClose, count, total, beforePay, onPaid }) {
   const [accountId, setAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayString());
   const [saving, setSaving] = useState(false);
+  // 'now': paid from an account today. 'later': charged now (an expense) and
+  // put on the Liabilities page, to be paid from an account when money comes.
+  const [when, setWhen] = useState('now');
+  const later = when === 'later';
 
   useEffect(() => {
     if (!open) return;
+    setWhen('now');
     setAccountId('');
     setPaymentDate(todayString());
     client.get('/accounts').then((r) => setAccounts(r.data.data.accounts.filter((a) => a.isActive))).catch(() => setAccounts([]));
@@ -105,7 +111,8 @@ function PayModal({ open, onClose, count, total, beforePay, onPaid }) {
     setSaving(true);
     try {
       if (!(await beforePay())) return;
-      const res = await client.post('/salaries/sheet/pay', { paymentAccountId: accountId, paymentDate });
+      const res = await client.post('/salaries/sheet/pay', later ? { toLiabilities: true, paymentDate } : { paymentAccountId: accountId, paymentDate });
+      if (later) toast.success('Salaries charged as an expense and put on the Liabilities page -- pay them from there when the money comes.');
       onPaid(res.data.data);
     } catch (err) {
       toast.error(err.friendlyMessage || 'Payment failed. Nothing was paid.');
@@ -125,31 +132,48 @@ function PayModal({ open, onClose, count, total, beforePay, onPaid }) {
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={pay} disabled={!accountId} loading={saving}>
-            Pay {formatCurrency(total)}
+          <Button onClick={pay} disabled={!later && !accountId} loading={saving}>
+            {later ? `Charge ${formatCurrency(total)} to Liabilities` : `Pay ${formatCurrency(total)}`}
           </Button>
         </div>
       }
     >
       <div className="space-y-4">
-        <div className="rounded-xl bg-neutral-950 px-4 py-3 text-white">
+        <div className="rounded-xl surface-blue px-4 py-3 text-white">
           <p className="text-xs uppercase tracking-wide text-neutral-400">Paying {count} {count === 1 ? 'person' : 'people'}</p>
           <p className="text-2xl font-bold">{formatCurrency(total)}</p>
         </div>
-        <FormField label="Pay from account" required>
-          <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">Select an account</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} — {formatCurrency(a.currentBalance)}
-              </option>
-            ))}
-          </Select>
-        </FormField>
-        <FormField label="Payment date" required>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            ['now', 'Pay now', 'From an account today'],
+            ['later', 'Pay later', 'Expense now, to Liabilities -- no account moves'],
+          ].map(([key, label, hint]) => (
+            <button key={key} type="button" onClick={() => setWhen(key)} className={`rounded-xl border px-3 py-2 text-left text-sm ${when === key ? 'border-brand-400 bg-brand-50' : 'border-neutral-200 hover:border-neutral-300'}`}>
+              <span className="block font-semibold text-neutral-900">{label}</span>
+              <span className="block text-xs text-neutral-500">{hint}</span>
+            </button>
+          ))}
+        </div>
+        {!later && (
+          <FormField label="Pay from account" required>
+            <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              <option value="">Select an account</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} — {formatCurrency(a.currentBalance)}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+        )}
+        <FormField label={later ? 'Expense date (e.g. the 30th, end of the month)' : 'Payment date'} required>
           <Input type="date" value={paymentDate} max={todayString()} onChange={(e) => setPaymentDate(e.target.value)} />
         </FormField>
-        <p className="text-xs text-slate-500">Each salary is recorded as a "Salaries" expense. If anything fails, nothing is paid.</p>
+        <p className="text-xs text-neutral-500">
+          {later
+            ? 'Each salary is recorded as a "Salaries" expense now and gets its own line on the Liabilities page; pay each from an account there when the money comes.'
+            : 'Each salary is recorded as a "Salaries" expense. If anything fails, nothing is paid.'}
+        </p>
       </div>
     </Modal>
   );
@@ -246,8 +270,8 @@ function SalarySheetEditor() {
   return (
     <div>
       <div className="no-print">
-        <section className="relative mb-5 overflow-hidden rounded-2xl bg-bulbul p-6 text-white shadow-xl shadow-brand-950/25">
-          <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-gold-400/20 blur-3xl" />
+        <section className="relative mb-5 overflow-hidden rounded-2xl surface-blue p-6 text-white shadow-lg shadow-black/20">
+          <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-brand-400/25 blur-3xl" />
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/25">
@@ -260,7 +284,7 @@ function SalarySheetEditor() {
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-wide text-white/60">This sheet</p>
-              <p className="text-3xl font-bold tabular-nums">{formatCurrency(total)}</p>
+              <p className="text-3xl font-bold figure">{formatCurrency(total)}</p>
               <p className="text-xs text-white/60">
                 {count} {count === 1 ? 'person' : 'people'} · {periodLabel(period)}
               </p>
@@ -288,7 +312,7 @@ function SalarySheetEditor() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link to="/salaries/statement" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            <Link to="/salaries/statement" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200/80 bg-white px-3.5 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50">
               <ScrollText className="h-4 w-4" /> Payment statement
             </Link>
             <Button variant="secondary" onClick={() => save()} loading={saving} disabled={!dirty || hasErrors}>
@@ -304,17 +328,17 @@ function SalarySheetEditor() {
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <p className="text-sm font-semibold text-slate-900">
+        <div className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+          <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+            <p className="text-sm font-semibold text-neutral-900">
               {data.open ? `${data.open.sheetNumber} · being prepared` : 'New salary sheet'}
             </p>
-            {dirty && <span className="text-xs font-medium text-amber-600">Unsaved changes</span>}
+            {dirty && <span className="text-xs font-medium text-brand-600">Unsaved changes</span>}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
                   <th className="w-12 px-4 py-2.5 font-medium">#</th>
                   <th className="px-4 py-2.5 font-medium">Name</th>
                   <th className="px-4 py-2.5 font-medium">Role</th>
@@ -324,19 +348,22 @@ function SalarySheetEditor() {
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={String(r.userId)} className={`border-t border-slate-100 ${r.value > 0 ? 'bg-brand-50/40' : ''}`}>
-                    <td className="px-4 py-2 text-slate-400">{i + 1}</td>
+                  <tr key={String(r.userId)} className={`border-t border-neutral-100 ${r.value > 0 ? 'bg-brand-50/40' : ''}`}>
+                    <td className="px-4 py-2 text-neutral-400">{i + 1}</td>
                     <td className="px-4 py-2">
-                      <p className="font-medium text-slate-800">{r.name}</p>
-                      <p className="text-xs text-slate-400">
-                        @{r.username} ·{' '}
+                      <p className="font-medium text-neutral-800">{r.name}</p>
+                      <p className="text-xs text-neutral-400">
+                        {r.kind === 'worker' ? (
+                          <span className="mr-1 rounded bg-brand-100 px-1.5 py-px text-[10px] font-semibold text-brand-800">Worker</span>
+                        ) : null}
+                        {r.kind === 'worker' ? r.phone || 'no login' : r.username} ·{' '}
                         <Link to={`/salaries/statement?user=${r.userId}`} className="font-semibold text-brand-600 hover:underline">
                           Statement
                         </Link>
                       </p>
                     </td>
-                    <td className="px-4 py-2 text-slate-600">{ROLE_LABEL[r.role] || r.role}</td>
-                    <td className="whitespace-nowrap px-4 py-2 text-right text-slate-400">{r.last ? formatCurrency(r.last) : '—'}</td>
+                    <td className="px-4 py-2 text-neutral-600">{ROLE_LABEL[r.role] || r.role}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-neutral-400">{r.last ? formatCurrency(r.last) : '—'}</td>
                     <td className="px-4 py-2">
                       <div className="flex justify-end">
                         <Input
@@ -351,13 +378,13 @@ function SalarySheetEditor() {
                           onChange={(e) => setOne(r.userId, e.target.value)}
                         />
                       </div>
-                      {r.error && <p className="mt-0.5 text-right text-xs text-rose-600">{r.error}</p>}
+                      {r.error && <p className="mt-0.5 text-right text-xs text-brand-600">{r.error}</p>}
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-slate-900 bg-slate-50 font-bold text-slate-900">
+                <tr className="border-t-2 border-neutral-900 bg-neutral-50 font-bold text-neutral-900">
                   <td className="px-4 py-3" colSpan={4}>
                     Total
                   </td>
@@ -367,6 +394,8 @@ function SalarySheetEditor() {
             </table>
           </div>
         </div>
+
+        <WorkersPanel onChanged={load} />
 
         <SavedSheets history={history} />
       </div>
@@ -391,15 +420,15 @@ function SalarySheetEditor() {
 
 function SavedSheets({ history }) {
   return (
-    <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3.5">
-        <History className="h-4 w-4 text-slate-400" />
-        <h3 className="text-sm font-semibold text-slate-900">Saved salary sheets</h3>
+    <div className="mt-6 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+      <div className="flex items-center gap-2 border-b border-neutral-100 px-5 py-3.5">
+        <History className="h-4 w-4 text-neutral-400" />
+        <h3 className="text-sm font-semibold text-neutral-900">Saved salary sheets</h3>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-5 py-2.5 font-medium">Sheet</th>
               <th className="px-5 py-2.5 font-medium">Month</th>
               <th className="px-5 py-2.5 font-medium">People</th>
@@ -411,24 +440,24 @@ function SavedSheets({ history }) {
           <tbody>
             {history.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-neutral-400">
                   No salary sheets yet.
                 </td>
               </tr>
             )}
             {history.map((h) => (
-              <tr key={h.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+              <tr key={h.id} className="border-t border-neutral-100 hover:bg-neutral-50/60">
                 <td className="whitespace-nowrap px-5 py-2.5 font-semibold text-brand-600">{h.sheetNumber}</td>
-                <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{periodLabel(h.period)}</td>
-                <td className="px-5 py-2.5 text-slate-600">{h.rows.length}</td>
-                <td className="whitespace-nowrap px-5 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(h.total)}</td>
+                <td className="whitespace-nowrap px-5 py-2.5 text-neutral-600">{periodLabel(h.period)}</td>
+                <td className="px-5 py-2.5 text-neutral-600">{h.rows.length}</td>
+                <td className="whitespace-nowrap px-5 py-2.5 text-right font-semibold text-neutral-900">{formatCurrency(h.total)}</td>
                 <td className="px-5 py-2.5">
                   <Badge color={h.status === 'PAID' ? 'green' : h.status === 'CANCELLED' ? 'red' : 'amber'}>
                     {h.status === 'PAID' ? `Paid · ${h.paymentAccountName}` : h.status === 'CANCELLED' ? 'Cancelled · money returned' : 'Being prepared'}
                   </Badge>
                 </td>
                 <td className="px-5 py-2.5 text-right">
-                  <Link to={`/salaries/${h.id}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                  <Link to={`/salaries/${h.id}`} className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs font-semibold text-neutral-600 hover:bg-neutral-50">
                     <Eye className="h-3.5 w-3.5" /> View
                   </Link>
                 </td>
@@ -470,7 +499,7 @@ function SalarySheetView({ id }) {
     }
   };
 
-  if (error) return <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700">{error}</div>;
+  if (error) return <div className="rounded-lg bg-brand-50 p-4 text-sm text-brand-700">{error}</div>;
   if (!sheet) return <PageSpinner />;
   const paid = sheet.status === 'PAID' || sheet.status === 'CANCELLED';
   const rows = sheet.rows.map((r) => ({ key: String(r.user), name: r.name, role: r.role, amount: r.amount, expenseNumber: r.expenseNumber }));
@@ -478,18 +507,18 @@ function SalarySheetView({ id }) {
   return (
     <div>
       <div className="no-print">
-        <Link to="/salaries" className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <Link to="/salaries" className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> Back to Salaries
         </Link>
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
+            <h1 className="flex items-center gap-2 text-xl font-bold text-neutral-900">
               {sheet.sheetNumber}
               <Badge color={sheet.status === 'PAID' ? 'green' : sheet.status === 'CANCELLED' ? 'red' : 'amber'}>
                 {sheet.status === 'PAID' ? 'Paid' : sheet.status === 'CANCELLED' ? 'Cancelled' : 'Being prepared'}
               </Badge>
             </h1>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-neutral-500">
               Salaries · {periodLabel(sheet.period)}
               {sheet.paidAt && ` · paid ${formatDate(sheet.paymentDate)} from ${sheet.paymentAccountName}`}
             </p>
@@ -507,7 +536,7 @@ function SalarySheetView({ id }) {
           </div>
         </div>
         {sheet.status === 'CANCELLED' && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="mb-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-700">
             <p className="font-bold">CANCELLED — the money went back to {sheet.paymentAccountName}.</p>
             <p className="text-xs">
               {formatDateTime(sheet.cancelledAt)}
@@ -517,14 +546,14 @@ function SalarySheetView({ id }) {
           </div>
         )}
         {sheet.status === 'PAID' && (
-          <p className="mb-4 flex items-center gap-1.5 text-sm text-slate-600">
+          <p className="mb-4 flex items-center gap-1.5 text-sm text-neutral-600">
             <CheckCircle2 className="h-4 w-4 text-brand-600" /> Recorded {formatDateTime(sheet.paidAt)}
             {sheet.paidByName ? ` by ${sheet.paidByName}` : ''} · each salary is a "Salaries" expense
           </p>
         )}
       </div>
 
-      <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
+      <div className="mx-auto max-w-4xl rounded-2xl border border-neutral-200/80 bg-white p-6 sm:p-8 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none">
         <SalaryPrintSheet sheetNumber={sheet.sheetNumber} period={sheet.period} rows={rows} paid={paid} hidden={false} />
       </div>
 

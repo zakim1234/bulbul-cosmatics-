@@ -32,16 +32,16 @@ test('CANCEL PERMISSION -- only admins, or someone an admin switched it on for, 
     const customer = await Customer.create({ name: 'C', phone: '1' });
     const sale = (u) => as(u)('/sales', { customerId: customer.id, items: [{ itemId: item.id, quantity: 1 }], paidAmount: 0, paymentAccountId: account.id });
 
-    // Pending invoice: the cashier who made it can't cancel it.
+    // Today's invoice (final at once): the cashier who made it can't cancel it.
     const draft = await sale(cashier);
     assert.equal(draft.status, 201, JSON.stringify(draft));
-    assert.equal((await as(cashier)(`/sales/${draft.data.id}/cancel`, {})).status, 403);
-    assert.equal((await as(manager)(`/sales/${draft.data.id}/cancel`, {})).status, 403);
+    assert.equal((await as(cashier)(`/sales/${draft.data.id}/reverse`, {})).status, 403);
+    assert.equal((await as(manager)(`/sales/${draft.data.id}/reverse`, {})).status, 403);
 
     // The admin switches it on for the cashier: now they can.
     const on = await as(admin)(`/users/${cashier.id}`, { permissions: ['pos', 'customers', 'cancelInvoices'] }, 'PUT');
     assert.equal(on.status, 200, JSON.stringify(on));
-    assert.equal((await as(cashier)(`/sales/${draft.data.id}/cancel`, {})).status, 200);
+    assert.equal((await as(cashier)(`/sales/${draft.data.id}/reverse`, {})).status, 200);
 
     // Confirmed invoice: manager blocked, admin allowed.
     const second = await sale(admin);

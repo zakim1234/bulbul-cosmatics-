@@ -4,7 +4,9 @@ import Customer from '../models/Customer.js';
 import Payment from '../models/Payment.js';
 import CustomerLedger from '../models/CustomerLedger.js';
 import Account from '../models/Account.js';
+import AccountTransaction from '../models/AccountTransaction.js';
 import DayClose from '../models/DayClose.js';
+import ChatMessage from '../models/ChatMessage.js';
 import Expense from '../models/Expense.js';
 import BusinessDay from '../models/BusinessDay.js';
 import { currentBranch } from './branchContext.js';
@@ -65,33 +67,15 @@ export async function openDay({ user } = {}) {
   return bd;
 }
 
-// Zeroes every active Account with a non-zero balance, posting one
-// auditable ADJUSTMENT transaction per account (never a silent overwrite)
-// so the ledger fully explains why the balance moved. Returns the
-// pre-reset balances for the DayClose snapshot to preserve permanently.
-async function resetOperationalAccounts(session, user) {
+// What every active Account holds at the moment of closing, kept on the
+// DayClose as a permanent snapshot. Accounts are NOT emptied: the money stays
+// in them for the admin; staff only see what came in since the last close
+// (see accountController).
+async function snapshotAccountBalances(session) {
   const accounts = await Account.find({ isActive: true }).session(session);
-  const before = [];
-  for (const account of accounts) {
-    if (account.currentBalanceCents === 0) continue;
-    before.push({ account: account._id, accountName: account.name, balanceBeforeResetCents: account.currentBalanceCents });
-    const direction = account.currentBalanceCents > 0 ? 'OUT' : 'IN';
-    const amountCents = Math.abs(account.currentBalanceCents);
-    await postImmediateTransaction(
-      {
-        account,
-        direction,
-        type: 'ADJUSTMENT',
-        amountCents,
-        referenceType: 'Manual',
-        referenceId: null,
-        description: `Close Day reset (${startOfDay().toDateString()})`,
-        createdBy: user,
-      },
-      session
-    );
-  }
-  return before;
+  return accounts
+    .filter((a) => a.currentBalanceCents !== 0)
+    .map((a) => ({ account: a._id, accountName: a.name, balanceBeforeResetCents: a.currentBalanceCents }));
 }
 
 // Read-only validation pass: every Draft must still reference a real
@@ -123,8 +107,15 @@ export async function validateDraftsForClose(drafts) {
 // PENDING account receipts (nothing posted yet -- this is a preview).
 // Read-only -- never mutates anything.
 export async function buildDayClosePreview() {
-  const drafts = await Sale.find({ status: 'DRAFT' }).sort({ createdAt: 1 }).populate('paymentAccount', 'name').populate('createdBy', 'name');
-  const problems = await validateDraftsForClose(drafts);
+  // Today's invoices: final at once (awaitingDayClose), plus any still
+  // Pending from before. Close Day counts them all; only Pending ones can
+  // have problems to fix first.
+  const [pending, confirmedToday] = await Promise.all([
+    Sale.find({ status: 'DRAFT' }).populate('paymentAccount', 'name').populate('createdBy', 'name'),
+    Sale.find({ status: 'CONFIRMED', awaitingDayClose: true }).populate('paymentAccount', 'name').populate('createdBy', 'name'),
+  ]);
+  const drafts = [...pending, ...confirmedToday].sort((a, b) => a.createdAt - b.createdAt);
+  const problems = await validateDraftsForClose(pending);
   const businessDay = await getBusinessDayStatus();
 
   const totals = drafts.reduce(
@@ -147,16 +138,16 @@ export async function buildDayClosePreview() {
     const accId = String(s.paymentAccount._id || s.paymentAccount);
     const accName = s.paymentAccount.name || 'Account';
     const acc = byAccount.get(accId) || { account: accId, accountName: accName, amountCents: 0 };
-    acc.amountCents += s.paidAmountCents;
+    acc.amountCents += s.paidAmountCents - (s.vatDeducted ? s.vatCents || 0 : 0); // less the VAT the merchant kept
     byAccount.set(accId, acc);
 
     const userId = String(s.createdBy?._id || s.createdBy || 'unknown');
     const userName = s.createdBy?.name || 'Unknown';
     const cashier = byCashier.get(userId) || { user: userId, userName, byAccount: new Map(), totalCents: 0 };
     const cashierAcc = cashier.byAccount.get(accId) || { account: accId, accountName: accName, amountCents: 0 };
-    cashierAcc.amountCents += s.paidAmountCents;
+    cashierAcc.amountCents += s.paidAmountCents - (s.vatDeducted ? s.vatCents || 0 : 0);
     cashier.byAccount.set(accId, cashierAcc);
-    cashier.totalCents += s.paidAmountCents;
+    cashier.totalCents += s.paidAmountCents - (s.vatDeducted ? s.vatCents || 0 : 0);
     byCashier.set(userId, cashier);
   }
 
@@ -178,6 +169,121 @@ export async function buildDayClosePreview() {
 // resets every operational Account to $0 (with a full audit trail) and
 // closes the business day. Wrapped in a single Mongo transaction so
 // nothing can half-apply.
+// Confirms one draft invoice: stock taken off for good (WAC cost snapshot),
+// the customer's debt/payment posted, its pending account receipt posted.
+// Used by Close Day for every draft, and right away for an invoice made from
+// a quotation (it does not wait for Close Day).
+export async function confirmSale(sale, session, user) {
+  // 1. Convert reservation into a permanent stock deduction. Lots are
+  // still consumed oldest/nearest-expiry-first (FEFO) for physical
+  // traceability -- which supplier/purchase/expiry each unit came from
+  // -- but that is now a traceability concern only. The line's
+  // historical accounting cost is the item's Weighted Average Cost (WAC)
+  // at this exact moment, snapshotted here and never touched again: a
+  // normal sale/stock-out does not change WAC (Phase 12), so this
+  // invoice's cost/profit stays correct forever even after later
+  // purchases move the item's average cost.
+  let costOfGoodsCents = 0;
+  for (const line of sale.items) {
+    const itemDoc = await InventoryItem.findById(line.item).session(session);
+    if (!itemDoc) {
+      // Item deleted after this invoice was made: no stock left to deduct.
+      line.costPriceCents = line.costPriceCents || 0;
+      line.lotConsumption = [];
+      costOfGoodsCents += line.quantity * line.costPriceCents;
+      continue;
+    }
+    if (!line.batchReservations?.length) line.batchReservations = await reserveBatches(itemDoc, line.quantity, session);
+    const { breakdown } = await consumeReservedBatches(line.batchReservations, session);
+    await confirmReservation(line.item, line.quantity, session, sale.receiptNumber);
+    line.costPriceCents = itemDoc.costPriceCents; // WAC snapshot -- authoritative historical COGS basis
+    line.lotConsumption = breakdown; // lot/expiry/supplier traceability only, no longer the cost basis
+    costOfGoodsCents += line.quantity * itemDoc.costPriceCents;
+  }
+
+  const profitCents = sale.totalCents - costOfGoodsCents;
+
+  // 2. Post customer debt/payment (deferred until now on purpose).
+  const customer = await Customer.findById(sale.customer).session(session);
+  const previousBalanceCents = customer.balanceCents;
+  // Wallet credit was already debited immediately at Draft creation/edit
+  // (see saleService.debitWallet) -- it reduces what's owed here exactly
+  // like paidAmountCents does, but never posts a new Account receipt.
+  // Whatever would still be owed is first covered from any wallet credit
+  // the customer holds now (e.g. deposited after the Draft was created),
+  // so a credit sale never becomes debt while the wallet has money.
+  const autoWalletCents = Math.min(customer.walletBalanceCents, sale.totalCents - sale.paidAmountCents - sale.walletAmountCents);
+  if (autoWalletCents > 0) {
+    await debitWallet(customer, autoWalletCents, sale, session, user);
+    sale.walletAmountCents += autoWalletCents;
+  }
+  const balanceAddedCents = sale.totalCents - sale.paidAmountCents - sale.walletAmountCents;
+
+  customer.balanceCents += balanceAddedCents;
+  customer.totalPurchasedCents += sale.totalCents;
+  customer.totalPaidCents += sale.paidAmountCents;
+  await customer.save({ session });
+
+  if (sale.paidAmountCents > 0) {
+    const receiptNumber = await generatePaymentReceiptNumber(session);
+    await Payment.create(
+      [
+        {
+          receiptNumber,
+          customer: customer._id,
+          amountCents: sale.paidAmountCents,
+          type: 'sale',
+          relatedSale: sale._id,
+          previousBalanceCents,
+          newBalanceCents: previousBalanceCents + balanceAddedCents,
+          createdBy: sale.createdBy,
+        },
+      ],
+      { session }
+    );
+  }
+
+  if (balanceAddedCents > 0) {
+    await CustomerLedger.create(
+      [
+        {
+          customer: customer._id,
+          type: 'SALE_CREDIT',
+          amountCents: balanceAddedCents,
+          sale: sale._id,
+          description: `Credit sale ${sale.receiptNumber}`,
+          balanceBeforeCents: previousBalanceCents,
+          balanceAfterCents: previousBalanceCents + balanceAddedCents,
+          createdBy: sale.createdBy,
+        },
+      ],
+      { session }
+    );
+  }
+
+  // 3. Post the pending account transaction (money actually moves now).
+  const txn = sale.accountTransaction ? await postTransaction(sale.accountTransaction, session) : null;
+  // Posted now: its statement line no longer says Draft / pending Close Day.
+  if (txn && /^Draft sale |pending Close Day/.test(txn.description || '')) {
+    txn.description = txn.description.replace(/^Draft sale /, 'Sale ').replace(/ \(pending Close Day\)$/, '').replace(/, pending Close Day\)$/, ')');
+    await AccountTransaction.updateOne({ _id: txn._id }, { $set: { description: txn.description } }, { session });
+  }
+
+  // 4. Finalize the sale document itself.
+  sale.costOfGoodsCents = costOfGoodsCents;
+  sale.profitCents = profitCents;
+  sale.previousBalanceCents = previousBalanceCents;
+  sale.balanceAddedCents = balanceAddedCents;
+  sale.outstandingCents = balanceAddedCents;
+  sale.status = 'CONFIRMED';
+  sale.confirmedAt = new Date();
+  await sale.save({ session });
+
+  // 5. Any wallet credit still left pays older unpaid invoices too.
+  await applyWalletToDebt(customer, session, user);
+  return { costOfGoodsCents, profitCents, balanceAddedCents, txn };
+}
+
 export async function closeDay({ user } = {}) {
   const businessDay = await getBusinessDayStatus();
   if (businessDay.status === 'CLOSED') {
@@ -210,98 +316,22 @@ export async function closeDay({ user } = {}) {
     if (bd && bd.status === 'CLOSED') throw new ApiError(409, 'The day was already closed.');
 
     const currentDrafts = await Sale.find({ status: 'DRAFT' }).sort({ createdAt: 1 }).session(session);
-    for (const sale of currentDrafts) {
-      // 1. Convert reservation into a permanent stock deduction. Lots are
-      // still consumed oldest/nearest-expiry-first (FEFO) for physical
-      // traceability -- which supplier/purchase/expiry each unit came from
-      // -- but that is now a traceability concern only. The line's
-      // historical accounting cost is the item's Weighted Average Cost (WAC)
-      // at this exact moment, snapshotted here and never touched again: a
-      // normal sale/stock-out does not change WAC (Phase 12), so this
-      // invoice's cost/profit stays correct forever even after later
-      // purchases move the item's average cost.
-      let costOfGoodsCents = 0;
-      for (const line of sale.items) {
-        const itemDoc = await InventoryItem.findById(line.item).session(session);
-        if (!itemDoc) {
-          // Item deleted after this invoice was made: no stock left to deduct.
-          line.costPriceCents = line.costPriceCents || 0;
-          line.lotConsumption = [];
-          costOfGoodsCents += line.quantity * line.costPriceCents;
-          continue;
-        }
-        if (!line.batchReservations?.length) line.batchReservations = await reserveBatches(itemDoc, line.quantity, session);
-        const { breakdown } = await consumeReservedBatches(line.batchReservations, session);
-        await confirmReservation(line.item, line.quantity, session, sale.receiptNumber);
-        line.costPriceCents = itemDoc.costPriceCents; // WAC snapshot -- authoritative historical COGS basis
-        line.lotConsumption = breakdown; // lot/expiry/supplier traceability only, no longer the cost basis
-        costOfGoodsCents += line.quantity * itemDoc.costPriceCents;
+    // Invoices made from a quotation were confirmed when converted: they are
+    // counted in today's totals too, once.
+    const fromQuotations = await Sale.find({ status: 'CONFIRMED', awaitingDayClose: true }).sort({ createdAt: 1 }).session(session);
+    for (const sale of [...currentDrafts, ...fromQuotations]) {
+      // Stock, customer and account are posted by confirmSale.
+      const already = sale.status === 'CONFIRMED';
+      const { costOfGoodsCents, profitCents, balanceAddedCents, txn } = already
+        ? { costOfGoodsCents: sale.costOfGoodsCents || 0, profitCents: sale.profitCents || 0, balanceAddedCents: sale.balanceAddedCents || 0, txn: sale.accountTransaction ? await AccountTransaction.findById(sale.accountTransaction).session(session) : null }
+        : await confirmSale(sale, session, user);
+      if (already) {
+        sale.awaitingDayClose = false;
+        await sale.save({ session });
       }
 
-      const profitCents = sale.totalCents - costOfGoodsCents;
-
-      // 2. Post customer debt/payment (deferred until now on purpose).
-      const customer = await Customer.findById(sale.customer).session(session);
-      const previousBalanceCents = customer.balanceCents;
-      // Wallet credit was already debited immediately at Draft creation/edit
-      // (see saleService.debitWallet) -- it reduces what's owed here exactly
-      // like paidAmountCents does, but never posts a new Account receipt.
-      // Whatever would still be owed is first covered from any wallet credit
-      // the customer holds now (e.g. deposited after the Draft was created),
-      // so a credit sale never becomes debt while the wallet has money.
-      const autoWalletCents = Math.min(customer.walletBalanceCents, sale.totalCents - sale.paidAmountCents - sale.walletAmountCents);
-      if (autoWalletCents > 0) {
-        await debitWallet(customer, autoWalletCents, sale, session, user);
-        sale.walletAmountCents += autoWalletCents;
-      }
-      const balanceAddedCents = sale.totalCents - sale.paidAmountCents - sale.walletAmountCents;
-
-      customer.balanceCents += balanceAddedCents;
-      customer.totalPurchasedCents += sale.totalCents;
-      customer.totalPaidCents += sale.paidAmountCents;
-      await customer.save({ session });
-
-      if (sale.paidAmountCents > 0) {
-        const receiptNumber = await generatePaymentReceiptNumber(session);
-        await Payment.create(
-          [
-            {
-              receiptNumber,
-              customer: customer._id,
-              amountCents: sale.paidAmountCents,
-              type: 'sale',
-              relatedSale: sale._id,
-              previousBalanceCents,
-              newBalanceCents: previousBalanceCents + balanceAddedCents,
-              createdBy: sale.createdBy,
-            },
-          ],
-          { session }
-        );
-      }
-
-      if (balanceAddedCents > 0) {
-        await CustomerLedger.create(
-          [
-            {
-              customer: customer._id,
-              type: 'SALE_CREDIT',
-              amountCents: balanceAddedCents,
-              sale: sale._id,
-              description: `Credit sale ${sale.receiptNumber}`,
-              balanceBeforeCents: previousBalanceCents,
-              balanceAfterCents: previousBalanceCents + balanceAddedCents,
-              createdBy: sale.createdBy,
-            },
-          ],
-          { session }
-        );
-      }
-
-      // 3. Post the pending account transaction (money actually moves now)
-      // and attribute it to both the Account and the cashier who took it.
-      if (sale.accountTransaction) {
-        const txn = await postTransaction(sale.accountTransaction, session);
+      // Attribute the posted receipt to its Account and the cashier who took it.
+      {
         if (txn) {
           const accKey = String(txn.account);
           const account = await Account.findById(txn.account).session(session);
@@ -328,19 +358,6 @@ export async function closeDay({ user } = {}) {
         }
       }
 
-      // 4. Finalize the sale document itself.
-      sale.costOfGoodsCents = costOfGoodsCents;
-      sale.profitCents = profitCents;
-      sale.previousBalanceCents = previousBalanceCents;
-      sale.balanceAddedCents = balanceAddedCents;
-      sale.outstandingCents = balanceAddedCents;
-      sale.status = 'CONFIRMED';
-      sale.confirmedAt = new Date();
-      await sale.save({ session });
-
-      // 5. Any wallet credit still left pays older unpaid invoices too.
-      await applyWalletToDebt(customer, session, user);
-
       revenueCents += sale.totalCents;
       cogsCents += costOfGoodsCents;
       grossProfitCents += profitCents;
@@ -351,9 +368,8 @@ export async function closeDay({ user } = {}) {
       confirmedSales.push(sale);
     }
 
-    // 6. Reset every operational Account to $0 -- with a full audit trail,
-    // capturing what each one held immediately before the reset.
-    const accountBalancesBeforeReset = await resetOperationalAccounts(session, user);
+    // 6. Record what every account holds at closing (nothing is moved).
+    const accountBalancesBeforeReset = await snapshotAccountBalances(session);
 
     const paymentBreakdown = Array.from(paymentBreakdownMap.values());
     const cashierBreakdown = Array.from(cashierBreakdownMap.values()).map((c) => ({ ...c, byAccount: Array.from(c.byAccount.values()) }));
@@ -373,6 +389,7 @@ export async function closeDay({ user } = {}) {
           invoiceDiscountCents,
           cashierBreakdown,
           accountBalancesBeforeReset,
+          balancesKept: true,
           invoiceReferences,
           openedAt: bd?.openedAt || null,
           closedBy: user?._id || null,
@@ -382,6 +399,10 @@ export async function closeDay({ user } = {}) {
       ],
       { session }
     );
+
+    // The chat only lasts for the business day: closing it deletes every
+    // message of this branch.
+    await ChatMessage.deleteMany(currentBranch() ? { branch: currentBranch() } : {}, { session });
 
     // 7. Flip the business day to CLOSED.
     await BusinessDay.findByIdAndUpdate(
@@ -455,8 +476,10 @@ export async function reopenDayClose({ dayCloseId, user, reason = '' }) {
     // from today's sales/accounts. The delta posted is
     // (target - whatever the account holds right now), so this is safe even
     // if something legitimately moved the account while the day was closed.
+    // Only closings from before accounts were kept (balancesKept false)
+    // emptied them, so only those have anything to put back.
     const restoredAccounts = [];
-    for (const entry of dayClose.accountBalancesBeforeReset) {
+    for (const entry of dayClose.balancesKept ? [] : dayClose.accountBalancesBeforeReset) {
       const account = await Account.findById(entry.account).session(session);
       if (!account) continue; // account deleted since close -- nothing to restore it onto
       const targetCents = entry.balanceBeforeResetCents;

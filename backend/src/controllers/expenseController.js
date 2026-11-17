@@ -1,7 +1,8 @@
 import Expense from '../models/Expense.js';
 import { listExpenseCategories, resolveExpenseCategory, addExpenseCategory } from '../services/expenseCategoryService.js';
 import Account from '../models/Account.js';
-import { postExpense, voidExpenseDoc } from '../services/expenseService.js';
+import { postExpense, voidExpenseDoc, chargeExpenseLater } from '../services/expenseService.js';
+import Liability from '../models/Liability.js';
 import { logAudit } from '../services/auditService.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -9,8 +10,20 @@ import { toCents, fromCents } from '../utils/money.js';
 import { resolveDateRange } from '../utils/dateRange.js';
 import { runInTransaction } from '../utils/transaction.js';
 
-function toDTO(e) {
+// `owed`: for one charged to Liabilities, its line there -- what is paid
+// (each payment: account, amount, date) and what is left.
+function toDTO(e, owed = null) {
+  const l = owed && typeof owed === 'object' ? owed : null;
   return {
+    payLater: !!e.liability,
+    liability: e.liability
+      ? {
+          id: e.liability,
+          paid: l ? fromCents(l.paidCents || 0) : 0,
+          left: l ? fromCents(l.amountCents - (l.paidCents || 0)) : fromCents(e.amountCents),
+          payments: (l?.payments || []).map((p) => ({ amount: fromCents(p.amountCents), accountName: p.accountName, date: p.date })),
+        }
+      : null,
     id: e._id,
     expenseNumber: e.expenseNumber,
     category: e.category,
@@ -59,12 +72,17 @@ export const createExpense = asyncHandler(async (req, res) => {
   if (!Number.isFinite(amountNumber) || amountNumber <= 0 || !Number.isSafeInteger(toCents(amountNumber)) || toCents(amountNumber) <= 0) {
     throw new ApiError(400, 'Amount must be greater than zero.');
   }
-  if (!paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
+  // Pay later: charged now (Profit & Loss, this list) and put on the
+  // Liabilities page to be paid from an account when the money comes.
+  const payLater = req.body.payLater === true;
+  if (payLater && req.user?.role !== 'admin') throw new ApiError(403, 'Only the admin can charge an expense to Liabilities.');
+  if (!payLater && !paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
   if (String(note).length > 500) throw new ApiError(400, 'Note is too long (500 characters max).');
   const amountCents = toCents(amountNumber);
   const expenseDate = parseExpenseDate(date);
 
   const expense = await runInTransaction(async (session) => {
+    if (payLater) return (await chargeExpenseLater(session, { category, amountCents, date: expenseDate, name: String(note).trim() || `${category} -- ${String(date || '').slice(0, 10)}`, note, user: req.user })).expense;
     const account = await Account.findById(paymentAccountId).session(session);
     if (!account || !account.isActive) throw new ApiError(400, 'Selected payment account is not available.');
 
@@ -76,7 +94,7 @@ export const createExpense = asyncHandler(async (req, res) => {
     action: 'expense.create',
     entityType: 'Expense',
     entityId: expense._id,
-    details: { expenseNumber: expense.expenseNumber, category, amount: amountNumber, account: expense.paymentAccountName },
+    details: { expenseNumber: expense.expenseNumber, category, amount: amountNumber, account: expense.paymentAccountName, payLater },
   });
 
   res.status(201).json({ success: true, data: toDTO(expense) });
@@ -110,10 +128,11 @@ export const listExpenses = asyncHandler(async (req, res) => {
     ]),
   ]);
 
+  const owed = new Map((await Liability.find({ _id: { $in: expenses.map((e) => e.liability).filter(Boolean) } }).select('amountCents paidCents payments').lean()).map((l) => [String(l._id), l]));
   res.json({
     success: true,
     data: {
-      expenses: expenses.map(toDTO),
+      expenses: expenses.map((e) => toDTO(e, e.liability ? owed.get(String(e.liability)) : null)),
       summary: { totalThisMonth: fromCents(monthAgg?.total || 0), totalFiltered: fromCents(filteredAgg?.total || 0) },
       categories: await listExpenseCategories(),
     },

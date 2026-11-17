@@ -1,5 +1,7 @@
+import mongoose from 'mongoose';
 import Purchase from '../models/Purchase.js';
 import Supplier from '../models/Supplier.js';
+import { userHas } from '../models/User.js';
 import InventoryItem from '../models/InventoryItem.js';
 import InventoryLot from '../models/InventoryLot.js';
 import Account from '../models/Account.js';
@@ -15,7 +17,9 @@ import { postImmediateTransaction } from '../services/accountService.js';
 import { reversePayment } from '../services/supplierPaymentService.js';
 import { removePurchase } from '../services/archivePurchaseService.js';
 import SupplierInvoiceArchive from '../models/SupplierInvoiceArchive.js';
+import { NAME_ORDER, startsWith, codeMatch } from '../utils/regex.js';
 import { assertInvoiceNumberFree } from '../services/invoiceNumberService.js';
+import { takeBackReceivedUnits } from '../services/stockRevaluationService.js';
 
 // Derived, never persisted: Unpaid/Partial/Paid always reflects the
 // authoritative paidAmountCents/totalCostCents pair, so it can never drift
@@ -32,6 +36,7 @@ function toDTO(p) {
     purchaseNumber: p.purchaseNumber,
     supplierInvoiceNumber: p.supplierInvoiceNumber,
     sourceArchive: p.sourceArchive || null,
+    isOpeningBalance: !!p.isOpeningBalance,
     supplier: p.supplier,
     supplierName: p.supplierName,
     items: p.items.map((i) => ({
@@ -113,17 +118,28 @@ export function parsePaymentDate(value) {
 // the one selected account (never split across accounts or silently pulled
 // from another one).
 export const createPurchase = asyncHandler(async (req, res) => {
-  const { supplierId, supplierInvoiceNumber = '', amount, amountPaid, purchaseAccountId } = req.body;
+  const { supplierId, supplierInvoiceNumber = '', amount, amountPaid, purchaseAccountId, notes = '' } = req.body;
+  // An opening balance is money owed from before, so nothing is paid now.
+  const isOpeningBalance = req.body.isOpeningBalance === true;
   if (typeof supplierInvoiceNumber !== 'string') throw new ApiError(400, 'Supplier invoice number must be text.');
+  if (String(notes).length > 1000) throw new ApiError(400, 'Notes are too long (1000 characters max).');
+  if (isOpeningBalance && !userHas(req.user, 'openingBalances')) throw new ApiError(403, 'You do not have access to supplier opening balances.');
+  if (isOpeningBalance && toCents(amountPaid ?? 0) !== 0) throw new ApiError(400, 'An opening balance cannot be paid when it is entered.');
   if (!supplierId) throw new ApiError(400, 'Please select or create a supplier.');
-  if (!Number.isFinite(Number(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Total amount must be greater than zero.');
+  // An opening balance below zero is money we had paid the supplier ahead
+  // (they owe us): it lowers what we owe them.
+  if (!Number.isFinite(Number(amount)) || (isOpeningBalance ? toCents(amount) === 0 : toCents(amount) <= 0)) {
+    throw new ApiError(400, isOpeningBalance ? 'Opening balance cannot be zero.' : 'Total amount must be greater than zero.');
+  }
   const totalCostCents = toCents(amount);
   // amountPaid omitted entirely still means "pay in full now" -- this keeps
   // the existing one-shot-payment call sites (and their tests) working
   // exactly as before; only an explicit amountPaid changes the behavior.
-  const paidAmountCents = amountPaid === undefined ? totalCostCents : toCents(amountPaid);
+  const paidAmountCents = isOpeningBalance ? 0 : amountPaid === undefined ? totalCostCents : toCents(amountPaid);
   if (!Number.isFinite(Number(amountPaid ?? 0)) || paidAmountCents < 0) throw new ApiError(400, 'Amount paid cannot be negative.');
-  if (paidAmountCents > totalCostCents) throw new ApiError(400, 'Amount paid cannot exceed the total amount.');
+  if (!isOpeningBalance && paidAmountCents > totalCostCents) throw new ApiError(400, 'Amount paid cannot exceed the total amount.');
+  // Money going out with a new invoice is paying the supplier too.
+  if (paidAmountCents > 0 && !userHas(req.user, 'paySuppliers')) throw new ApiError(403, 'You do not have permission to pay suppliers.');
   if (req.body.items?.length) throw new ApiError(400, 'Enter physical goods through Stock.');
   // The day the goods/invoice came in (YYYY-MM-DD); today when not given.
   const purchaseDate = req.body.purchaseDate ? parsePaymentDate(req.body.purchaseDate) : new Date();
@@ -156,6 +172,8 @@ export const createPurchase = asyncHandler(async (req, res) => {
           balanceCents,
           paymentAccount: account?._id || null,
           purchaseDate,
+          notes: String(notes).trim(),
+          isOpeningBalance,
           createdBy: req.user?._id,
         },
       ],
@@ -207,13 +225,139 @@ export const createPurchase = asyncHandler(async (req, res) => {
 
   await logAudit({
     user: req.user,
-    action: 'purchase.create',
+    action: isOpeningBalance ? 'purchase.opening_balance' : 'purchase.create',
     entityType: 'Purchase',
     entityId: result._id,
     details: { purchaseNumber: result.purchaseNumber, totalCost: fromCents(result.totalCostCents) },
   });
 
   res.status(201).json({ success: true, data: toDTO(result) });
+});
+
+const normalizeName = (name) => String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// GET /api/purchases/opening-balances/sheet -- every supplier opening balance
+// as a sheet row, so they can all be seen and corrected at once.
+// Every supplier is a row: its opening balance (blank when it has none --
+// typing one adds it) and what it is owed now across all its invoices.
+export const getOpeningBalancesSheet = asyncHandler(async (req, res) => {
+  const [suppliers, openings, purchases] = await Promise.all([
+    Supplier.find().collation(NAME_ORDER).sort({ name: 1 }).select('name').lean(),
+    Purchase.find({ isOpeningBalance: true, status: { $ne: 'voided' } }).select('supplier totalCostCents paidAmountCents').lean(),
+    Purchase.find({ status: { $ne: 'voided' } }).select('supplier balanceCents').lean(),
+  ]);
+  const opening = new Map(openings.map((p) => [String(p.supplier), p]));
+  const owed = new Map();
+  for (const p of purchases) owed.set(String(p.supplier), (owed.get(String(p.supplier)) || 0) + (p.balanceCents || 0));
+  res.json({
+    success: true,
+    data: suppliers.map((s) => {
+      const o = opening.get(String(s._id));
+      return {
+        // An opening balance is edited by its invoice; a supplier without one
+        // gets one added when an amount is typed.
+        id: o ? String(o._id) : `sup:${s._id}`,
+        supplierName: s.name,
+        amount: o ? fromCents(o.totalCostCents) : '',
+        owed: fromCents(owed.get(String(s._id)) || 0),
+      };
+    }),
+  });
+});
+
+// The supplier opening balances sheet: new rows (no id) add what we owed a
+// supplier -- one not in the system yet is created; existing rows (id) get
+// the amount typed in (never below what has been paid on it). All or
+// nothing. A supplier listed twice, or a new row for a supplier that already
+// has an opening balance, is refused, and a new row sent again because the
+// answer to the first send was lost (same importKey) is skipped -- nothing
+// is ever owed twice.
+export const createOpeningBalancesBulk = asyncHandler(async (req, res) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || !rows.length || rows.length > 500) throw new ApiError(400, 'Send between 1 and 500 suppliers at a time.');
+  const purchaseDate = req.body.purchaseDate ? parsePaymentDate(req.body.purchaseDate) : new Date();
+  const clean = rows.map((r, i) => {
+    const name = String(r?.supplierName || '').trim().replace(/\s+/g, ' ');
+    if (!name) throw new ApiError(400, `Row ${i + 1}: enter the supplier's name.`);
+    if (name.length > 200) throw new ApiError(400, `Row ${i + 1}: the name is too long.`);
+    // Below zero: we had paid this supplier ahead, so they owe us.
+    if (!Number.isFinite(Number(r.amount)) || toCents(r.amount) === 0) throw new ApiError(400, `Row ${i + 1} (${name}): enter the opening balance (it cannot be zero; use minus when the supplier owes you).`);
+    if (r.key !== undefined && (typeof r.key !== 'string' || r.key.length > 64)) throw new ApiError(400, `Row ${i + 1}: invalid row key.`);
+    // "sup:<id>" is a listed supplier with no opening balance yet: an add.
+    const id = r.id == null || String(r.id).startsWith('sup:') ? null : String(r.id);
+    if (id && !mongoose.isValidObjectId(id)) throw new ApiError(400, `Row ${i + 1}: invalid opening balance.`);
+    return { row: i + 1, id, key: r.key || null, name, normalized: normalizeName(name), cents: toCents(r.amount) };
+  });
+  const edits = clean.filter((c) => c.id);
+  if (edits.length && !(req.user?.isSuperAdmin || ['admin', 'manager'].includes(req.user?.role))) throw new ApiError(403, 'Only an admin or manager can change an opening balance.');
+
+  const done = new Set(
+    (await Purchase.find({ importKey: { $in: clean.filter((c) => !c.id).map((c) => c.key).filter(Boolean) } }).select('importKey')).map((p) => p.importKey)
+  );
+  const fresh = clean.filter((c) => c.id || !c.key || !done.has(c.key));
+  const adds = fresh.filter((c) => !c.id);
+  const inSheet = new Map();
+  for (const c of fresh) {
+    if (inSheet.has(c.normalized)) throw new ApiError(400, `Rows ${inSheet.get(c.normalized)} and ${c.row} are both "${c.name}". Put the whole amount on one row.`);
+    inSheet.set(c.normalized, c.row);
+  }
+
+  const created = await runInTransaction(async (session) => {
+    const suppliers = new Map((await Supplier.find().session(session)).map((s) => [normalizeName(s.name), s]));
+    const existing = await Purchase.find({ isOpeningBalance: true, status: { $ne: 'voided' }, supplier: { $in: [...suppliers.values()].map((s) => s._id) } }).select('supplier purchaseNumber').session(session);
+    const hasOpening = new Map(existing.map((p) => [String(p.supplier), p.purchaseNumber]));
+    const clash = adds.filter((c) => suppliers.has(c.normalized) && hasOpening.has(String(suppliers.get(c.normalized)._id)));
+    if (clash.length) {
+      const list = clash.slice(0, 5).map((c) => `${suppliers.get(c.normalized).name} (${hasOpening.get(String(suppliers.get(c.normalized)._id))})`).join(', ');
+      throw new ApiError(409, `Already has an opening balance: ${list}${clash.length > 5 ? ` and ${clash.length - 5} more` : ''}. Change the amount on that supplier's own row instead of adding a new one.`);
+    }
+    let updated = 0;
+    const openings = new Map((await Purchase.find({ _id: { $in: edits.map((c) => c.id) } }).session(session)).map((p) => [String(p._id), p]));
+    for (const c of edits) {
+      const purchase = openings.get(c.id);
+      if (!purchase || !purchase.isOpeningBalance || purchase.status === 'voided') throw new ApiError(404, `Row ${c.row} (${c.name}): this opening balance no longer exists.`);
+      if (purchase.totalCostCents === c.cents) continue;
+      if (purchase.paidAmountCents > 0 && c.cents < purchase.paidAmountCents) throw new ApiError(400, `Row ${c.row} (${purchase.supplierName}): ${fromCents(purchase.paidAmountCents).toFixed(2)} is already paid, so the balance cannot be less than that.`);
+      const supplier = await Supplier.findById(purchase.supplier).session(session);
+      if (supplier) {
+        supplier.totalSpentCents += c.cents - purchase.totalCostCents;
+        await supplier.save({ session });
+      }
+      purchase.totalCostCents = c.cents;
+      purchase.balanceCents = c.cents - purchase.paidAmountCents;
+      await purchase.save({ session });
+      updated += 1;
+    }
+    let newSuppliers = 0;
+    for (const c of adds) {
+      let supplier = suppliers.get(c.normalized);
+      if (!supplier) {
+        supplier = await new Supplier({ name: c.name }).save({ session });
+        suppliers.set(c.normalized, supplier);
+        newSuppliers += 1;
+      }
+      const purchaseNumber = await generatePurchaseNumber(session);
+      await new Purchase({
+        purchaseNumber,
+        supplier: supplier._id,
+        supplierName: supplier.name,
+        items: [],
+        totalCostCents: c.cents,
+        paidAmountCents: 0,
+        balanceCents: c.cents,
+        purchaseDate,
+        isOpeningBalance: true,
+        importKey: c.key || undefined,
+        createdBy: req.user?._id,
+      }).save({ session });
+      supplier.totalSpentCents += c.cents;
+      await supplier.save({ session });
+    }
+    return { newSuppliers, updated };
+  });
+
+  if (fresh.length) await logAudit({ user: req.user, action: 'purchase.opening_balance_bulk', entityType: 'Purchase', details: { created: adds.length, updated: created.updated, newSuppliers: created.newSuppliers } });
+  res.status(201).json({ success: true, data: { created: adds.length, updated: created.updated, newSuppliers: created.newSuppliers, skipped: clean.length - fresh.length } });
 });
 
 // GET /api/purchases/suppliers-summary -- one line per supplier we have
@@ -259,9 +403,9 @@ export const listPurchases = asyncHandler(async (req, res) => {
   if (q && String(q).trim()) {
     const escaped = String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.$or = [
-      { purchaseNumber: { $regex: escaped, $options: 'i' } },
-      { supplierInvoiceNumber: { $regex: escaped, $options: 'i' } },
-      { supplierName: { $regex: escaped, $options: 'i' } },
+      { purchaseNumber: codeMatch(escaped) },
+      { supplierInvoiceNumber: codeMatch(escaped) },
+      { supplierName: startsWith(escaped) },
     ];
   }
   if (paymentStatus === 'Unpaid') filter.paidAmountCents = 0;
@@ -295,7 +439,19 @@ export const listPurchases = asyncHandler(async (req, res) => {
 export const getPurchase = asyncHandler(async (req, res) => {
   const purchase = await Purchase.findById(req.params.id).populate('paymentAccount', 'name');
   if (!purchase) throw new ApiError(404, 'Purchase not found.');
-  res.json({ success: true, data: toDTO(purchase) });
+  // The goods on it: an invoice made from a Supplier Invoice shows that
+  // invoice's rows (item, quantity, cost) and any discount.
+  const dto = toDTO(purchase);
+  if (purchase.sourceArchive) {
+    const archive = await SupplierInvoiceArchive.findById(purchase.sourceArchive).select('archiveNumber rows discountCents grandTotalCents stockSerial').populate('stockEntry', 'stockSerial').lean();
+    if (archive) {
+      dto.items = archive.rows.map((r) => ({ item: null, name: r.itemName, quantity: r.quantity, unitCost: fromCents(r.costCents), subtotal: fromCents(r.totalCents) }));
+      dto.goodsDiscount = fromCents(archive.discountCents || 0);
+      dto.archiveNumber = archive.archiveNumber;
+      dto.stockSerial = archive.stockEntry?.stockSerial || null;
+    }
+  }
+  res.json({ success: true, data: dto });
 });
 
 // POST /api/purchases/:id/void -- reverses stock increase (does not go below 0)
@@ -317,18 +473,19 @@ export const voidPurchase = asyncHandler(async (req, res) => {
       }
     }
 
-    for (const line of purchase.items) {
-      const item = await InventoryItem.findById(line.item).session(session);
-      if (item) {
-        if (item.quantity < line.quantity) {
-          throw new ApiError(
-            409,
-            `Cannot void: "${item.name}" stock (${item.quantity}) is lower than the purchased quantity (${line.quantity}), likely because some of it was already sold.`
-          );
-        }
-        item.quantity -= line.quantity;
-        await item.save({ session });
+    // The stock it brought in leaves at what it cost, so the average of the
+    // rest goes back to what it was (and the Balance Sheet stays balanced).
+    // Its batches say what came in; an old invoice without batches, its lines.
+    const received = lots.length
+      ? lots.map((l) => ({ item: l.item, quantity: l.originalQuantity, unitCostCents: l.unitCostCents }))
+      : purchase.items.map((l) => ({ item: l.item, quantity: l.quantity, unitCostCents: l.unitCostCents }));
+    for (const r of received) {
+      const item = await InventoryItem.findById(r.item).session(session);
+      if (!item) continue;
+      if (item.quantity < r.quantity) {
+        throw new ApiError(409, `Cannot void: "${item.name}" stock (${item.quantity}) is lower than the purchased quantity (${r.quantity}), likely because some of it was already sold.`);
       }
+      await takeBackReceivedUnits(session, { itemId: r.item, quantity: r.quantity, unitCostCents: r.unitCostCents, receivedValueCents: r.quantity * r.unitCostCents, type: 'PURCHASE_VOIDED', reference: purchase.purchaseNumber, user: req.user });
     }
 
     await InventoryLot.deleteMany({ purchase: purchase._id }).session(session);
@@ -476,7 +633,7 @@ export const deletePurchase = asyncHandler(async (req, res) => {
 // exactly like the initial payment does.
 export const addPurchasePayment = asyncHandler(async (req, res) => {
   const amount = Number(req.body.amount);
-  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, 'Amount to pay must be greater than zero.');
+  if (!Number.isFinite(amount) || amount <= 0 || !Number.isSafeInteger(toCents(amount)) || toCents(amount) <= 0) throw new ApiError(400, 'Amount to pay must be greater than zero.');
   if (!req.body.paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
   const amountCents = toCents(amount);
 

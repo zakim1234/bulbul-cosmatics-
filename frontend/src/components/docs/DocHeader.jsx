@@ -1,5 +1,6 @@
 import { BUSINESS } from '../../constants/business.js';
-import logo from '../../images/logo.svg';
+import BusinessContacts from './BusinessContacts.jsx';
+import logo from '../../images/logo.png';
 
 // The branded top shared by every printed document: logo centred, business
 // name and contacts, a red rule, and a black band with the document title
@@ -8,14 +9,11 @@ export default function DocHeader({ title, meta, compact = false }) {
   return (
     <div style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
       <div className="flex flex-col items-center text-center">
-        <img src={logo} alt={BUSINESS.name} className={`${compact ? 'h-12' : 'h-16'} w-auto object-contain`} />
-        <h1 className={`mt-1 font-extrabold uppercase tracking-[0.2em] text-neutral-900 ${compact ? 'text-sm' : 'text-lg'}`}>{BUSINESS.name}</h1>
-        <p className="text-[11px] text-neutral-600">
-          {BUSINESS.addressLine} · {BUSINESS.phone}
-        </p>
+        <img src={logo} alt={BUSINESS.name} className={`${compact ? 'h-20' : 'h-28'} w-auto object-contain`} />
+        <BusinessContacts payments className="mt-2" />
       </div>
-      <div className={`${compact ? 'mt-3' : 'mt-4'} h-1 bg-brand-600`} />
-      <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 bg-neutral-950 text-white ${compact ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
+      <div className={`${compact ? 'mt-3' : 'mt-4'} h-1 bg-gradient-to-r from-brand-500 to-emerald-500`} />
+      <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 surface-blue text-white ${compact ? 'px-3 py-1.5' : 'px-4 py-2'}`}>
         <p className={`font-bold uppercase ${compact ? 'text-xs tracking-[0.2em]' : 'text-sm tracking-[0.25em]'}`}>{title}</p>
         {meta && <div className="text-[11px]">{meta}</div>}
       </div>
@@ -25,7 +23,7 @@ export default function DocHeader({ title, meta, compact = false }) {
 
 // Three totals boxes (white / red / black) used at the bottom of documents.
 export function DocTotals({ items }) {
-  const tone = ['border border-neutral-300 bg-white text-neutral-900', 'bg-brand-600 text-white', 'bg-neutral-950 text-white'];
+  const tone = ['border border-neutral-300 bg-white text-neutral-900', 'bg-brand-100 text-brand-900', 'surface-blue text-neutral-950'];
   return (
     <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`, WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
       {items.map(([label, value], i) => (
@@ -80,13 +78,13 @@ export function DocSummary({ lines = [], grand, owed }) {
         </div>
       ))}
       {grand && (
-        <div className="mt-1 flex justify-between bg-neutral-950 px-3 py-2 text-sm font-bold text-white">
+        <div className="mt-1 flex justify-between surface-blue px-3 py-2 text-sm font-bold text-white">
           <span>{grand[0]}</span>
           <span className="tabular-nums">{grand[1]}</span>
         </div>
       )}
       {owed && (
-        <div className="mt-1.5 flex justify-between bg-brand-600 px-3 py-2 text-sm font-bold text-white">
+        <div className="mt-1.5 flex justify-between bg-brand-100 px-3 py-2 text-sm font-bold text-brand-900">
           <span>{owed[0]}</span>
           <span className="tabular-nums">{owed[1]}</span>
         </div>

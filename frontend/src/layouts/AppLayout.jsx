@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
+  ArrowLeftRight,
   Boxes,
   Tag,
   ShoppingCart,
@@ -16,6 +17,7 @@ import {
   HandCoins,
   Handshake,
   Archive,
+  Landmark,
   Percent,
   LogOut,
   Menu,
@@ -26,18 +28,25 @@ import {
   Banknote,
   Globe2,
   Store,
-  Sparkles,
+  Undo2,
+  UserCheck,
+  PiggyBank,
+  Settings,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { hasPermission } from '../constants/permissions.js';
 import { BUSINESS } from '../constants/business.js';
-import logo from '../images/logo.svg';
+import logo from '../images/logo-mark.png';
 import BranchSwitcher from '../components/BranchSwitcher.jsx';
-import { getSelectedBranch } from '../api/client.js';
+import ChatWidget from '../components/ChatWidget.jsx';
+import StockAlerts from '../components/StockAlerts.jsx';
+import ThemeToggle from '../components/ThemeToggle.jsx';
+import { PageSpinner } from '../components/ui/Spinner.jsx';
+import client, { getSelectedBranch } from '../api/client.js';
 
 // The Super Admin outside any branch sees only the company-wide pages; a
 // branch's own pages appear once they open a branch.
-const OVERVIEW_PATHS = ['/super-dashboard', '/all-branches', '/reports', '/items-sold', '/partners', '/commissions', '/zakat', '/users', '/branches'];
+const OVERVIEW_PATHS = ['/super-dashboard', '/all-branches', '/reports', '/items-sold', '/refunds', '/staff-daily', '/partners', '/commissions', '/zakat', '/users', '/branches', '/company-wallet', '/settings', '/merchant-vat'];
 const inOverviewPath = (path) => OVERVIEW_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 // Only on the Super Admin's own screen, never inside a branch.
 const SUPER_ONLY_PATHS = ['/all-branches', '/super-dashboard', '/zakat', '/commissions', '/partners/profit-sharing', '/branches'];
@@ -48,99 +57,195 @@ const inOverview = (user) => !!user?.isSuperAdmin && !getSelectedBranch();
 // standalone permission gate) -- Dashboard only, per the deliberate choice
 // to leave it ungated ("if appropriate").
 const navItems = [
-  { to: '/super-dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null, superAdmin: true },
-  { to: '/all-branches', label: 'All Branches', icon: Globe2, module: null, superAdmin: true },
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null },
-  { to: '/stock', label: 'Stock', icon: Boxes, module: 'stock' },
-  { to: '/stock-adjustments', label: 'Stock Adjustment', icon: SlidersHorizontal, module: 'stock' },
-  { to: '/inventory', label: 'Inventory', icon: Boxes, module: 'inventory' },
-  { to: '/categories', label: 'Categories', icon: Tag, module: 'categories' },
-  { to: '/pos', label: 'Seller / POS', icon: ShoppingCart, module: 'pos' },
-  { to: '/daily-closing', label: 'Daily Closing', icon: CalendarCheck, module: 'pos' },
-  { to: '/quotations', label: 'Quotation', icon: FileText, module: 'quotations' },
-  { to: '/purchases', label: 'Purchase Invoices', icon: FileText, module: 'purchases' },
-  { to: '/accounts', label: 'Accounts', icon: Wallet, module: 'accounts' },
-  { to: '/partners', label: 'Partners / Investors', icon: Handshake, module: 'partners' },
-  { to: '/fixed-assets', label: 'Fixed Assets', icon: Archive, module: 'fixedAssets' },
-  { to: '/zakat', label: 'Zakat', icon: Percent, module: 'zakat', superAdmin: true },
-  { to: '/customers', label: 'Customers', icon: Users, module: 'customers' },
-  { to: '/suppliers', label: 'Suppliers', icon: Building2, module: 'suppliers' },
-  { to: '/supplier-invoices', label: 'Supplier Invoices', icon: Receipt, module: 'supplierInvoices' },
-  { to: '/expenses', label: 'Expenses', icon: HandCoins, module: 'expenses' },
-  { to: '/salaries', label: 'Salaries', icon: Banknote, module: null, roles: ['admin', 'manager'] },
-  { to: '/commissions', label: 'Commissions', icon: BadgePercent, module: null, superAdmin: true },
-  { to: '/reports', label: 'Reports', icon: BarChart3, module: 'reports' },
-  { to: '/items-sold', label: 'Items Sold', icon: PackageCheck, module: 'reports' },
+  { to: '/super-dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null, superAdmin: true, section: 'Overview' },
+  { to: '/all-branches', label: 'All Branches', icon: Globe2, module: null, superAdmin: true, section: 'Overview' },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: null, section: 'Overview' },
+  { to: '/pos', label: 'Seller / POS', icon: ShoppingCart, module: 'pos', section: 'Sales' },
+  { to: '/daily-closing', label: 'Daily Closing', icon: CalendarCheck, module: null, roles: ['admin', 'manager'], section: 'Sales' },
+  { to: '/quotations', label: 'Quotation', icon: FileText, module: 'quotations', section: 'Sales' },
+  { to: '/customers', label: 'Customers', icon: Users, module: 'customers', section: 'Sales' },
+  { to: '/stock', label: 'Stock', icon: Boxes, module: 'stock', section: 'Stock' },
+  { to: '/stock-adjustments', label: 'Stock Adjustment', icon: SlidersHorizontal, module: 'stockAdjustments', section: 'Stock' },
+  { to: '/inventory', label: 'Inventory', icon: Boxes, module: 'inventory', section: 'Stock' },
+  { to: '/categories', label: 'Categories', icon: Tag, module: 'categories', section: 'Stock' },
+  { to: '/purchases', label: 'Purchase Invoices', icon: FileText, module: 'purchases', section: 'Purchasing' },
+  { to: '/suppliers', label: 'Suppliers', icon: Building2, module: 'suppliers', section: 'Purchasing' },
+  { to: '/supplier-invoices', label: 'Supplier Invoices', icon: Receipt, module: 'supplierInvoices', section: 'Purchasing' },
+  { to: '/offsets', label: 'Customer ↔ Supplier', icon: ArrowLeftRight, module: 'offsets', section: 'Purchasing' },
+  { to: '/accounts', label: 'Accounts', icon: Wallet, module: 'accounts', section: 'Money' },
+  { to: '/expenses', label: 'Expenses', icon: HandCoins, module: 'expenses', section: 'Money' },
+  { to: '/salaries', label: 'Salaries', icon: Banknote, module: 'salaries', section: 'Money' },
+  { to: '/commissions', label: 'Commissions', icon: BadgePercent, module: null, superAdmin: true, section: 'Money' },
+  { to: '/partners', label: 'Partners / Investors', icon: Handshake, module: 'partners', section: 'Money' },
+  { to: '/fixed-assets', label: 'Fixed Assets', icon: Archive, module: 'fixedAssets', section: 'Money' },
+  { to: '/liabilities', label: 'Liabilities', icon: Landmark, module: 'fixedAssets', section: 'Money' },
+  { to: '/zakat', label: 'Zakat', icon: Percent, module: 'zakat', superAdmin: true, section: 'Money' },
+  { to: '/company-wallet', label: 'Company Wallet', icon: PiggyBank, module: 'companyWallet', section: 'Money' },
+  { to: '/wallet-report', label: 'Company Wallet report', icon: FileText, module: 'walletTakesReport', section: 'Reports' },
+  { to: '/settings', label: 'Settings', icon: Settings, module: null, superAdmin: true, section: 'Admin' },
+  { to: '/my-report', label: 'My Report', icon: BarChart3, module: null, staffOnly: true, section: 'Reports' },
+  { to: '/reports', label: 'Reports', icon: BarChart3, module: null, roles: ['admin'], section: 'Reports' },
+  { to: '/items-sold', label: 'Items Sold', icon: PackageCheck, module: 'itemsSoldReport', section: 'Reports' },
+  { to: '/item-report', label: 'Item Report', icon: PackageCheck, module: 'itemReport', section: 'Reports' },
+  { to: '/refunds', label: 'Refunds', icon: Undo2, module: 'refundsReport', section: 'Reports' },
+  { to: '/merchant-vat', label: 'Merchant VAT', icon: Percent, module: 'merchantVatReport', section: 'Reports' },
+  { to: '/staff-daily', label: 'Staff Daily', icon: UserCheck, module: 'staffDailyReport', section: 'Reports' },
 ];
+
+// Each menu item remembers the last page opened under it (a customer's
+// statement, a purchase...), so stepping away to another menu item and coming
+// back lands there again, not on the list. Clicking the item while already
+// under it, or the page's own Back, goes to its start.
+const LAST_PAGE_KEY = 'nav_last_page';
+const ownerOf = (pathname) =>
+  navItems.concat({ to: '/users' }, { to: '/branches' }).filter(({ to }) => pathname === to || pathname.startsWith(`${to}/`)).sort((a, b) => b.to.length - a.to.length)[0]?.to;
+function readLastPages(userId) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(LAST_PAGE_KEY) || '{}');
+    return saved.user === userId ? saved.pages || {} : {};
+  } catch {
+    return {};
+  }
+}
 
 function SidebarContent({ onNavigate }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const here = ownerOf(location.pathname);
+  const [lastPages, setLastPages] = useState(() => readLastPages(user?.id));
+
+  useEffect(() => {
+    if (!here) return;
+    setLastPages((pages) => {
+      const next = { ...pages, [here]: location.pathname + location.search };
+      try {
+        sessionStorage.setItem(LAST_PAGE_KEY, JSON.stringify({ user: user?.id, pages: next }));
+      } catch {
+        // Storage blocked: remembering only lasts until the page reloads.
+      }
+      return next;
+    });
+  }, [here, location.pathname, location.search, user?.id]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
+  // A remembered page that cannot open in the current view (e.g. Share Year
+  // Profit, all-branches only, while inside a branch) would bounce back to the
+  // dashboard -- then the menu item goes to its own start page instead.
+  const usableLastPage = (path) => (path && (inOverview(user) ? inOverviewPath(path) : !isSuperOnlyPath(path)) ? path : null);
+
+  const items = navItems
+    .filter(({ module, roles, superAdmin, staffOnly }) =>
+      superAdmin ? !!user?.isSuperAdmin : staffOnly ? user?.role !== 'admin' && !user?.isSuperAdmin : roles ? roles.includes(user?.role) : module === null || hasPermission(user, module)
+    )
+    .concat(user?.role === 'admin' ? [{ to: '/users', label: 'Users', icon: UserCog, module: null, section: 'Admin' }] : [])
+    .concat(user?.isSuperAdmin ? [{ to: '/branches', label: 'Branches', icon: Store, module: null, section: 'Admin' }] : [])
+    .filter(({ to }) => (inOverview(user) ? OVERVIEW_PATHS.includes(to) : !SUPER_ONLY_PATHS.includes(to)));
+  // Grouped under small section headings, in the order they first appear.
+  const sections = [];
+  for (const item of items) {
+    let group = sections.find((g) => g.name === item.section);
+    if (!group) sections.push((group = { name: item.section, items: [] }));
+    group.items.push(item);
+  }
+
   return (
-    <div className="bg-bulbul flex h-full flex-col text-white">
-      <div className="flex items-center gap-3 px-5 pb-5 pt-6">
-        <img src={logo} alt={BUSINESS.name} className="h-12 w-12 shrink-0 drop-shadow-[0_4px_12px_rgba(224,72,137,0.45)]" />
+    <div className="flex h-full flex-col surface-blue text-neutral-300">
+      <div className="flex items-center gap-3 px-5 pb-4 pt-5">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center">
+          <img src={logo} alt={BUSINESS.name} className="h-full w-full object-contain" />
+        </span>
         <div className="min-w-0">
-          <p className="font-display truncate text-lg font-semibold leading-tight text-white">Bulbul</p>
-          <p className="text-gold-shine truncate text-[11px] font-medium uppercase leading-tight tracking-[0.32em]">Cosmetics</p>
+          <p className="truncate text-[15px] font-bold leading-tight text-white" style={{ fontFamily: 'var(--font-display)' }}>
+            {BUSINESS.name}
+          </p>
+          <p className="truncate text-[10.5px] font-medium uppercase tracking-[0.16em] text-neutral-500">Inventory &amp; POS</p>
         </div>
       </div>
-      <div className="mx-5 mb-4 h-px bg-gradient-to-r from-transparent via-gold-400/50 to-transparent" />
 
       <BranchSwitcher />
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-3 pt-1">
-        {navItems
-          .filter(({ module, roles, superAdmin }) => (superAdmin ? !!user?.isSuperAdmin : roles ? roles.includes(user?.role) : module === null || hasPermission(user, module)))
-          .concat(user?.role === 'admin' ? [{ to: '/users', label: 'Users', icon: UserCog, module: null }] : [])
-          .concat(user?.isSuperAdmin ? [{ to: '/branches', label: 'Branches', icon: Store, module: null }] : [])
-          .filter(({ to }) => (inOverview(user) ? OVERVIEW_PATHS.includes(to) : !SUPER_ONLY_PATHS.includes(to)))
-          .map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] transition-all ${
-                isActive
-                  ? 'bg-gradient-to-r from-brand-500/90 to-brand-700/80 font-medium text-white shadow-lg shadow-brand-950/40'
-                  : 'font-normal text-white/65 hover:bg-white/[0.07] hover:text-white'
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span className={`absolute -left-3 h-6 w-1 rounded-r-full ${isActive ? 'bg-gold-300' : 'bg-transparent'}`} />
-                <Icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? 'text-gold-200' : 'text-white/45 group-hover:text-gold-200'}`} />
-                <span className="truncate">{label}</span>
-              </>
-            )}
-          </NavLink>
+      <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch] [touch-action:pan-y]">
+        {sections.map((group) => (
+          <div key={group.name} className="mt-4 first:mt-1">
+            <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">{group.name}</p>
+            <div className="space-y-px">
+              {group.items.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={here === to || to === '/partners' ? to : usableLastPage(lastPages[to]) || to}
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    `group relative flex items-center gap-3 rounded-lg px-3 py-[7px] text-[13.5px] transition-colors ${
+                      isActive ? 'bg-white/[0.55] font-semibold text-white' : 'font-medium text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-100'
+                    }`
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <span className={`absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full ${isActive ? 'bg-emerald-500' : 'bg-transparent'}`} />
+                      <Icon className={`h-[17px] w-[17px] shrink-0 ${isActive ? 'text-emerald-600' : 'text-neutral-500 group-hover:text-neutral-300'}`} />
+                      <span className="truncate">{label}</span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
-      <div className="border-t border-white/10 p-3">
-        <div className="mb-1.5 flex items-center gap-3 rounded-xl bg-white/[0.06] px-3 py-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-gold-200 to-gold-500 text-xs font-semibold text-brand-950">
+      <div className="border-t border-white/[0.06] p-3">
+        <div className="flex items-center gap-3 rounded-xl bg-white/[0.04] px-3 py-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-300 to-emerald-300 text-xs font-bold text-neutral-950">
             {user?.name?.slice(0, 2).toUpperCase()}
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-white">{user?.name}</p>
-            <p className="truncate text-xs font-normal capitalize text-white/50">{user?.role}</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-white">{user?.name}</p>
+            <p className="truncate text-[11px] capitalize text-neutral-500">{user?.isSuperAdmin ? 'Super Admin' : user?.role}</p>
           </div>
+          <button onClick={handleLogout} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-neutral-400 transition-colors hover:bg-white/10 hover:text-white">
+            <LogOut className="h-4 w-4" /> Logout
+          </button>
         </div>
-        <button
-          onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-normal text-white/60 transition-colors hover:bg-white/[0.07] hover:text-brand-200"
-        >
-          <LogOut className="h-[18px] w-[18px]" />
-          Logout
-        </button>
+      </div>
+    </div>
+  );
+}
+
+// Thin bar over every page: where you are (a branch, or all branches) and today.
+function TopBar() {
+  const { user } = useAuth();
+  const [branchName, setBranchName] = useState('');
+  useEffect(() => {
+    const id = getSelectedBranch();
+    if (!user || !id) return;
+    client
+      .get('/branches')
+      .then((r) => setBranchName(r.data.data.find((b) => String(b.id) === id)?.name || ''))
+      .catch(() => setBranchName(''));
+  }, [user]);
+  const where = inOverview(user) ? 'All branches' : branchName;
+  return (
+    <div className="hidden items-center justify-between border-b border-white/[0.06] surface-blue px-8 py-2.5 md:flex no-print">
+      <p className="flex items-center gap-2 text-[13px] text-neutral-400">
+        {where && (
+          <>
+            <Store className="h-3.5 w-3.5 text-brand-400" />
+            <span className="font-semibold text-white">{where}</span>
+            <span className="text-neutral-700">/</span>
+          </>
+        )}
+        {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+      </p>
+      <div className="flex items-center gap-3">
+        <p className="text-[13px] text-neutral-400">
+          Signed in as <span className="font-semibold text-white">{user?.name}</span>
+        </p>
+        <ThemeToggle className="hover:bg-white/40" />
       </div>
     </div>
   );
@@ -152,13 +257,25 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Esc on a page does what Back does: the page before. Not while a window
+  // is open (Esc closes it) or a search list is open (Esc closes the list).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (document.querySelector('[data-modal]')) return;
+      if ((window.history.state?.idx ?? 0) > 0) navigate(-1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigate]);
+
   useEffect(() => {
     if (inOverview(user) && !inOverviewPath(location.pathname)) navigate('/super-dashboard', { replace: true });
-    else if (!inOverview(user) && isSuperOnlyPath(location.pathname)) navigate('/dashboard', { replace: true });
+    else if (!inOverview(user) && isSuperOnlyPath(location.pathname)) navigate(location.pathname.startsWith('/partners') ? '/partners' : '/dashboard', { replace: true });
   }, [user, location.pathname, navigate]);
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-[#f4f6f8]">
       {/* Desktop / tablet sidebar */}
       <aside className="hidden w-64 shrink-0 no-print md:block">
         <SidebarContent />
@@ -168,53 +285,46 @@ export default function AppLayout() {
       {mobileOpen && (
         <div className="fixed inset-0 z-40 md:hidden no-print">
           <div
-            className="absolute inset-0 bg-brand-950/50 backdrop-blur-sm transition-opacity"
+            className="absolute inset-0 bg-neutral-900/40 transition-opacity"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="absolute left-0 top-0 h-full w-72 shadow-2xl transition-transform duration-200">
-            <button
-              onClick={() => setMobileOpen(false)}
-              className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-white/60 hover:bg-white/10 hover:text-white"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+          <aside className="absolute left-0 top-0 flex h-full max-h-[100dvh] w-64 flex-col overflow-hidden surface-blue shadow-xl transition-transform duration-200">
+            <div className="flex items-center justify-end px-2.5 pt-2.5">
+              <button
+                onClick={() => setMobileOpen(false)}
+                className="relative z-10 rounded-md p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="-mt-11 min-h-0 flex-1">
+              <SidebarContent onNavigate={() => setMobileOpen(false)} />
+            </div>
           </aside>
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="bg-bulbul flex items-center gap-3 px-4 py-3 md:hidden no-print">
-          <button onClick={() => setMobileOpen(true)} className="rounded-lg p-1.5 text-white/80 hover:bg-white/10">
+        <header className="flex items-center gap-3 border-b border-neutral-200/80 bg-white px-4 py-3 md:hidden no-print">
+          <button onClick={() => setMobileOpen(true)} className="rounded-md p-1.5 text-neutral-600 hover:bg-neutral-100">
             <Menu className="h-5 w-5" />
           </button>
-          <img src={logo} alt={BUSINESS.name} className="h-8 w-8" />
-          <p className="font-display text-base font-semibold text-white">
-            Bulbul <span className="text-gold-shine">Cosmetics</span>
-          </p>
+          <img src={logo} alt={BUSINESS.name} className="h-7 w-7 object-contain" />
+          <p className="text-sm font-semibold text-neutral-900">{BUSINESS.name}</p>
+          <ThemeToggle className="ml-auto" />
         </header>
 
-        <header className="hidden items-center justify-between border-b border-brand-100/70 bg-white/70 px-6 py-3 backdrop-blur md:flex no-print">
-          <p className="flex items-center gap-2 text-sm text-slate-500">
-            <Sparkles className="h-4 w-4 text-gold-400" />
-            <span className="font-display italic text-brand-800">Beauty that sells itself</span>
-          </p>
-          <div className="flex items-center gap-4">
-            <span className="text-xs text-slate-400">
-              {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-            </span>
-            <span className="flex items-center gap-2 rounded-full bg-brand-50 py-1 pl-1 pr-3 text-xs font-medium text-brand-800 ring-1 ring-brand-100">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-800 text-[10px] font-semibold text-white">
-                {user?.name?.slice(0, 2).toUpperCase()}
-              </span>
-              {user?.name}
-            </span>
-          </div>
-        </header>
-
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <Outlet />
+        <TopBar />
+        <main className="flex-1 overflow-y-auto p-4 pb-24 sm:p-6 sm:pb-24 lg:px-8">
+          {/* The sidebar stays put while a page downloads for the first time. */}
+          <Suspense fallback={<PageSpinner />}>
+            <Outlet />
+          </Suspense>
         </main>
+        {/* Chat: per branch; the Super Admin's overview reaches every branch. */}
+        {user && <ChatWidget />}
+        {/* Expiry and low-stock pop-ups, for whoever looks after the stock. */}
+        {user && hasPermission(user, 'inventory') && <StockAlerts />}
       </div>
     </div>
   );

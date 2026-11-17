@@ -12,6 +12,8 @@ import { fromCents } from '../utils/money.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { gregorianToApproximateHijriYear } from '../utils/hijriDate.js';
 import { toDayString } from '../services/profitLossService.js';
+import Branch from '../models/Branch.js';
+import { runWithBranch } from '../services/branchContext.js';
 
 const ZAKAT_CATEGORY = 'Zakat';
 
@@ -68,6 +70,15 @@ export const confirmZakat = asyncHandler(async (req, res) => {
 
   const calc = await calculateZakat({ date: req.body.date, rateBps: req.body.rate, includeFixedAssets: req.body.includeFixedAssets });
   if (calc.zakatDueCents <= 0) throw new ApiError(409, 'Zakat due is zero -- nothing to record.');
+  const record = await saveZakat({ calc, deductionMode, paymentAccountId, note, user: req.user });
+  res.status(201).json({ success: true, data: recordToDTO(record) });
+});
+
+// Saves one confirmed calculation in the current branch: the record, and for
+// AUTO the Expense + account deduction. Used for one branch and, branch by
+// branch, for "all branches at once".
+async function saveZakat({ calc, deductionMode, paymentAccountId, note, user }) {
+  const req = { user };
 
   const record = await runInTransaction(async (session) => {
     let account = null;
@@ -149,8 +160,76 @@ export const confirmZakat = asyncHandler(async (req, res) => {
     entityId: record._id,
     details: { amount: fromCents(record.zakatDueCents), deductionMode, date: calc.calculationDate },
   });
+  return record;
+}
 
-  res.status(201).json({ success: true, data: recordToDTO(record) });
+// GET /api/zakat/branches-preview -- the all-branches view: each open
+// branch's own Zakat for the same date/rate, with that branch's accounts
+// (for paying it automatically).
+export const previewZakatBranches = asyncHandler(async (req, res) => {
+  const branches = await Branch.find({ active: true }).sort({ createdAt: 1 }).select('_id name').lean();
+  const rows = [];
+  for (const b of branches) {
+    const row = await runWithBranch(b._id, async () => {
+      const calc = await calculateZakat({ date: req.query.date, rateBps: req.query.rate, includeFixedAssets: req.query.includeFixedAssets });
+      const accounts = await Account.find({ isActive: true }).sort({ name: 1 }).select('_id name').lean();
+      return {
+        branchId: b._id,
+        branchName: b.name,
+        netZakatableWealth: fromCents(calc.netZakatableWealthCents),
+        zakatDue: fromCents(calc.zakatDueCents),
+        accounts: accounts.map((a) => ({ id: a._id, name: a.name })),
+      };
+    });
+    rows.push(row);
+  }
+  const totalDue = rows.reduce((s, r) => s + Math.round(r.zakatDue * 100), 0);
+  res.json({ success: true, data: { branches: rows, totalDue: fromCents(totalDue) } });
+});
+
+// POST /api/zakat/all-branches -- confirms every open branch's Zakat at once,
+// each in its own branch (record, and for AUTO the Expense from that
+// branch's chosen account). Branches with nothing due are skipped.
+// Body: { date, rate, includeFixedAssets, deductionMode, accounts: { [branchId]: accountId }, note }
+export const confirmZakatAllBranches = asyncHandler(async (req, res) => {
+  const { deductionMode, note } = req.body;
+  const accounts = req.body.accounts || {};
+  if (!['AUTO', 'MANUAL'].includes(deductionMode)) throw new ApiError(400, 'Choose how Zakat will be paid: AUTO or MANUAL.');
+  if (String(note || '').length > 1000) throw new ApiError(400, 'Note is too long (1000 characters max).');
+
+  const branches = await Branch.find({ active: true }).sort({ createdAt: 1 }).select('_id name').lean();
+  // Work out every branch first, so a missing account stops it before
+  // anything is saved.
+  const plan = [];
+  for (const b of branches) {
+    const calc = await runWithBranch(b._id, () =>
+      calculateZakat({ date: req.body.date, rateBps: req.body.rate, includeFixedAssets: req.body.includeFixedAssets })
+    );
+    if (calc.zakatDueCents <= 0) continue;
+    const accountId = accounts[String(b._id)] || null;
+    if (deductionMode === 'AUTO') {
+      if (!accountId) throw new ApiError(400, `Select the account to pay ${b.name}'s Zakat from.`);
+      const ok = await runWithBranch(b._id, async () => await Account.exists({ _id: accountId, isActive: true }));
+      if (!ok) throw new ApiError(400, `The account chosen for ${b.name} is not available.`);
+    }
+    plan.push({ branch: b, calc, accountId });
+  }
+  if (!plan.length) throw new ApiError(409, 'Zakat due is zero in every branch -- nothing to record.');
+
+  const done = [];
+  for (const p of plan) {
+    try {
+      const record = await runWithBranch(p.branch._id, () =>
+        saveZakat({ calc: p.calc, deductionMode, paymentAccountId: p.accountId, note, user: req.user })
+      );
+      done.push({ branchName: p.branch.name, zakatDue: fromCents(record.zakatDueCents) });
+    } catch (err) {
+      const saved = done.map((d) => d.branchName).join(', ');
+      throw new ApiError(err.statusCode || 400, `${p.branch.name}: ${err.message}${saved ? ` (already saved: ${saved})` : ''}`);
+    }
+  }
+  const total = done.reduce((s, d) => s + Math.round(d.zakatDue * 100), 0);
+  res.status(201).json({ success: true, data: { branches: done, total: fromCents(total) } });
 });
 
 // POST /api/zakat/:id/mark-paid -- admin/manager only. For a MANUAL record

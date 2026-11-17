@@ -5,6 +5,43 @@ import CustomerWalletTransaction from '../models/CustomerWalletTransaction.js';
 import { nextSequence } from '../models/Counter.js';
 import { ApiError } from '../utils/ApiError.js';
 
+// Debt that is on no invoice -- the opening balance (what the customer owed
+// before the system). It is the oldest debt, so payments clear it first.
+export const OPENING_DEBT = 'Opening balance';
+
+// What a customer still owes: the unpaid confirmed invoices (oldest first)
+// and the opening debt not on any of them.
+export async function outstandingDebt(customer, session = null) {
+  const invoices = await Sale.find({ customer: customer._id, status: 'CONFIRMED', outstandingCents: { $gt: 0 } })
+    .sort({ createdAt: 1 })
+    .session(session);
+  const onInvoicesCents = invoices.reduce((sum, s) => sum + s.outstandingCents, 0);
+  const openingCents = Math.max(0, customer.balanceCents - onInvoicesCents);
+  return { invoices, openingCents, totalCents: onInvoicesCents + openingCents };
+}
+
+// Pays up to `cents` of that debt, opening debt first, then the oldest
+// invoices. Saves the invoices and returns the allocations (the opening debt
+// has no sale).
+export async function allocateDebt({ invoices, openingCents }, cents, session) {
+  const allocations = [];
+  let left = cents;
+  if (openingCents > 0 && left > 0) {
+    const take = Math.min(openingCents, left);
+    allocations.push({ sale: null, receiptNumber: OPENING_DEBT, amountCents: take });
+    left -= take;
+  }
+  for (const sale of invoices) {
+    if (left <= 0) break;
+    const take = Math.min(sale.outstandingCents, left);
+    sale.outstandingCents -= take;
+    await sale.save({ session });
+    allocations.push({ sale: sale._id, receiptNumber: sale.receiptNumber, amountCents: take });
+    left -= take;
+  }
+  return allocations;
+}
+
 // Debits the customer's wallet immediately (Draft creation/edit), recording
 // a SALE_PAYMENT wallet transaction. Never touches any Account -- that cash
 // already arrived at deposit time. Throws if it would go negative.
@@ -82,22 +119,11 @@ export async function applyWalletToDebt(customer, session, createdBy, { force = 
   if (!force && !customer.walletAutoPay) return 0;
   if (customer.walletBalanceCents <= 0 || customer.balanceCents <= 0) return 0;
 
-  const outstandingInvoices = await Sale.find({ customer: customer._id, status: 'CONFIRMED', outstandingCents: { $gt: 0 } })
-    .sort({ createdAt: 1 })
-    .session(session);
-  const totalOutstandingCents = outstandingInvoices.reduce((sum, s) => sum + s.outstandingCents, 0);
-  let toAllocate = Math.min(customer.walletBalanceCents, customer.balanceCents, totalOutstandingCents, maxCents ?? Infinity);
+  const debt = await outstandingDebt(customer, session);
+  const toAllocate = Math.min(customer.walletBalanceCents, customer.balanceCents, debt.totalCents, maxCents ?? Infinity);
   if (toAllocate <= 0) return 0;
 
-  const allocations = [];
-  for (const sale of outstandingInvoices) {
-    if (toAllocate <= 0) break;
-    const take = Math.min(sale.outstandingCents, toAllocate);
-    sale.outstandingCents -= take;
-    await sale.save({ session });
-    allocations.push({ sale: sale._id, receiptNumber: sale.receiptNumber, amountCents: take });
-    toAllocate -= take;
-  }
+  const allocations = await allocateDebt(debt, toAllocate, session);
   const appliedCents = allocations.reduce((sum, a) => sum + a.amountCents, 0);
   const invoiceList = allocations.map((a) => a.receiptNumber).join(', ');
   const createdById = createdBy?._id || createdBy || null;

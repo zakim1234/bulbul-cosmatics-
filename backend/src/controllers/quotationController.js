@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import InventoryItem from '../models/InventoryItem.js';
 import Quotation from '../models/Quotation.js';
 import Sale from '../models/Sale.js';
 import { nextSequence } from '../models/Counter.js';
@@ -8,6 +9,7 @@ import { runInTransaction } from '../utils/transaction.js';
 import { resolveDateRange } from '../utils/dateRange.js';
 import { fromCents } from '../utils/money.js';
 import { createSaleDraft } from '../services/saleService.js';
+import { getBusinessDayStatus, confirmSale } from '../services/dayCloseService.js';
 import { saleToDTO } from './saleController.js';
 import { effectiveStatus, quotationDTO, quotationStatuses, validateQuotation, money } from '../services/quotationService.js';
 
@@ -45,7 +47,14 @@ export const listQuotations = asyncHandler(async (req, res) => {
   const [rows, total] = await Promise.all([Quotation.find(filter).sort({ date: -1, _id: -1 }).skip((page - 1) * limit).limit(limit), Quotation.countDocuments(filter)]);
   res.json({ success: true, data: rows.map(quotationDTO), pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 });
-export const getQuotation = asyncHandler(async (req, res) => res.json({ success: true, data: quotationDTO(await findQuotation(req.params.id)) }));
+// Each line also carries what the item costs today (its average cost), shown
+// in the Cost column while working on the quotation -- never printed.
+export const getQuotation = asyncHandler(async (req, res) => {
+  const dto = quotationDTO(await findQuotation(req.params.id));
+  const costs = new Map((await InventoryItem.find({ _id: { $in: dto.items.map((i) => i.itemId) } }).select('costPriceCents').lean()).map((i) => [String(i._id), i.costPriceCents]));
+  dto.items = dto.items.map((i) => (costs.has(String(i.itemId)) ? { ...i, costPrice: fromCents(costs.get(String(i.itemId))) } : i));
+  res.json({ success: true, data: dto });
+});
 export const createQuotation = asyncHandler(async (req, res) => {
   const result = await runInTransaction(async session => {
     const data = await validateQuotation(req.body, session);
@@ -66,13 +75,29 @@ export const updateQuotation = asyncHandler(async (req, res) => {
   });
   res.json({ success: true, data: quotationDTO(q) });
 });
+// Accepting turns the quotation toward an invoice, so the business day must
+// be open (a quotation can still be written or rejected any time).
 export const setQuotationStatus = asyncHandler(async (req, res) => {
+  if (req.body.status === 'Accepted') {
+    const day = await getBusinessDayStatus();
+    if (day.status === 'CLOSED') throw new ApiError(409, 'Maalintu waa xiran tahay -- marka hore Open Day samee, kadib Accept. (The day is closed: do Open Day first, then accept.)');
+  }
   const q = await runInTransaction(async session => {
     const q = await findQuotation(req.params.id, session);
     const status = effectiveStatus(q);
-    const allowed = { Pending: ['Accepted', 'Rejected', 'Expired'], Accepted: ['Rejected', 'Expired'] };
+    // A rejected or expired quotation can be restored (back to Pending), then
+    // accepted and converted like any other.
+    const allowed = { Pending: ['Accepted', 'Rejected', 'Expired'], Accepted: ['Rejected', 'Expired'], Rejected: ['Pending'], Expired: ['Pending'] };
     if (!allowed[status]?.includes(req.body.status)) throw new ApiError(409, 'This quotation status transition is not allowed.');
     if (req.body.status === 'Expired' && q.expiryDate >= new Date()) throw new ApiError(400, 'This quotation has not expired.');
+    // Restored after its date passed: it gets the same number of days again.
+    if ((status === 'Rejected' || status === 'Expired') && req.body.status === 'Pending' && q.expiryDate < new Date()) {
+      const days = Math.max(1, Math.round((q.expiryDate - q.createdAt) / 86400000));
+      const until = new Date();
+      until.setDate(until.getDate() + days);
+      until.setHours(23, 59, 59, 999);
+      q.expiryDate = until;
+    }
     q.status = req.body.status;
     await q.save({ session });
     return q;
@@ -104,8 +129,16 @@ export const convertQuotation = asyncHandler(async (req, res) => {
     await q.save({ session });
     const sale = await createSaleDraft({
       customerId: q.customer, items: q.items.map(i => ({ itemId: i.item, quantity: i.quantity })),
-      discount: fromCents(q.totalDiscountCents), paidAmount: req.body.paidAmount ?? 0, paymentAccountId: req.body.paymentAccountId,
+      // The discount is given on the invoice now (a quotation from before may
+      // still carry one: it is used when none is given).
+      discount: req.body.discount != null ? req.body.discount : fromCents(q.totalDiscountCents), paidAmount: req.body.paidAmount ?? 0, paymentAccountId: req.body.paymentAccountId,
     }, req.user, session, { quotationId: q._id, quotedPrices: new Map(q.items.map(i => [String(i.item), i.unitPriceCents])) });
+    // An invoice made from a quotation is final at once -- it does not wait
+    // as Pending for Close Day: stock, the customer's debt and the account
+    // are posted now.
+    await confirmSale(sale, session, req.user);
+    sale.awaitingDayClose = true; // still counted in today's Close Day totals
+    await sale.save({ session });
     q.convertedInvoice = sale._id;
     q.convertedInvoiceNumber = sale.receiptNumber;
     await q.save({ session });

@@ -6,6 +6,7 @@ import {
   updatePartner,
   contributeCapital,
   withdrawCapital,
+  setOpeningBalance,
   listPartnerTransactions,
   profitSharingPreview,
   listProfitDistributions,
@@ -30,5 +31,6 @@ router.put('/:id', requireRole('admin', 'manager'), updatePartner);
 router.get('/:id/transactions', listPartnerTransactions);
 router.post('/:id/contribute', requireRole('admin', 'manager'), contributeCapital);
 router.post('/:id/withdraw', requireRole('admin', 'manager'), withdrawCapital);
+router.put('/:id/opening-balance', requireRole('admin', 'manager'), setOpeningBalance);
 
 export default router;

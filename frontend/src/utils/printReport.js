@@ -5,7 +5,8 @@
 export function printReport(orientation = 'portrait') {
   const style = document.createElement('style');
   style.id = 'a4-print-style';
-  style.textContent = `@page { size: A4 ${orientation}; margin: 14mm 12mm; }`;
+  // Top/bottom margin 0: no room for the browser's page link and date.
+  style.textContent = `@page { size: A4 ${orientation}; margin: 0 12mm; } body { padding: 14mm 0 !important; }`;
   document.head.appendChild(style);
 
   const cleanup = () => {

@@ -237,7 +237,7 @@ test('BALANCE SHEET -- assets/liabilities/equity math, includes Fixed Assets, fl
   const { admin, server, request } = await setup('balance_sheet');
   try {
     await seedFinancials({ request });
-    const fixedAsset = await request('/fixed-assets', { name: 'Computer and Printer', value: 300, dateAdded: '2026-01-01' });
+    const fixedAsset = await request('/fixed-assets', { owedTo: 'Cali', name: 'Computer and Printer', value: 300, dateAdded: '2026-01-01' });
     assert.equal(fixedAsset.status, 201, JSON.stringify(fixedAsset));
 
     const noAccess = await User.create({ username: 'nb', name: 'NB', passwordHash: 'unused', role: 'cashier', permissions: ['pos'] });
@@ -265,28 +265,31 @@ test('BALANCE SHEET -- assets/liabilities/equity math, includes Fixed Assets, fl
     assert.equal(bs.data.assets.fixedAssets, 300);
     assert.equal(bs.data.assets.totalAssets, 2350);
     assert.equal(bs.data.liabilities.payable, 150);
-    assert.equal(bs.data.liabilities.totalLiabilities, 150);
+    // The equipment was bought with money that is not the company's: its
+    // value is owed (Fixed asset debt), so it is matched on this side.
+    assert.equal(bs.data.liabilities.fixedAssetDebt, 300);
+    assert.equal(bs.data.liabilities.totalLiabilities, 450);
     assert.equal(bs.data.equity.partnersCapital, 1000, "sum of both partners' current equity");
     assert.equal(bs.data.equity.netIncome, 0, 'no confirmed sales in this test, so P&L is zero');
     assert.equal(bs.data.equity.retainedEarnings, 0);
     assert.equal(bs.data.equity.totalEquity, 1000);
-    assert.equal(bs.data.totalLiabilitiesAndEquity, 1150);
+    assert.equal(bs.data.totalLiabilitiesAndEquity, 1450);
 
-    // Assets (2350) != Liabilities+Equity (1150): the fixture was assembled by direct
+    // Assets (2350) != Liabilities+Equity (1450): the fixture was assembled by direct
     // document creation (see seedFinancials), not real transactions, so several of
     // these lines have no matching entry on the other side of the equation -- exactly
     // the kind of gap this check exists to surface, not hide.
     assert.equal(bs.data.isBalanced, false);
-    assert.equal(bs.data.difference, 1200);
+    assert.equal(bs.data.difference, 900);
 
     // The report is reactive to real changes: removing the Fixed Asset drops
-    // total assets (and the gap) by exactly its value, with nothing else moving.
+    // total assets and its debt by exactly its value; the gap does not move.
     const removed = await request(`/fixed-assets/${fixedAsset.data.id}/remove`, {});
     assert.equal(removed.status, 200, JSON.stringify(removed));
     const bs2 = await request('/reports/balance-sheet', null, 'GET');
     assert.equal(bs2.data.assets.fixedAssets, 0);
     assert.equal(bs2.data.assets.totalAssets, 2050);
-    assert.equal(bs2.data.totalLiabilitiesAndEquity, 1150, 'liabilities/equity side is unaffected by removing a fixed asset');
+    assert.equal(bs2.data.totalLiabilitiesAndEquity, 1150, 'its debt goes with it');
     assert.equal(bs2.data.difference, 900);
 
     // Excel export returns a real workbook.

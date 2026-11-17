@@ -9,12 +9,17 @@ function toDTO(a) {
     id: a._id,
     name: a.name,
     value: fromCents(a.valueCents),
+    owedTo: a.owedTo || '',
+    opening: !!a.opening,
     dateAdded: a.dateAdded,
     notes: a.notes,
     isActive: a.isActive,
     createdAt: a.createdAt,
   };
 }
+
+// One spelling per person, so their debts add up: spaces tidied.
+const cleanName = (v) => String(v || '').trim().replace(/\s+/g, ' ').slice(0, 120);
 
 function parseAssetDate(value) {
   if (!value) return new Date();
@@ -29,7 +34,9 @@ function parseAssetDate(value) {
 export const listFixedAssets = asyncHandler(async (req, res) => {
   const assets = await FixedAsset.find({ isActive: true }).sort({ dateAdded: -1, createdAt: -1 });
   const totalCents = assets.reduce((sum, a) => sum + a.valueCents, 0);
-  res.json({ success: true, data: { total: fromCents(totalCents), assets: assets.map(toDTO) } });
+  // Owed: bought with someone else's money (a debt). Opening: the company's own.
+  const openingCents = assets.filter((a) => a.opening).reduce((sum, a) => sum + a.valueCents, 0);
+  res.json({ success: true, data: { total: fromCents(totalCents), owedTotal: fromCents(totalCents - openingCents), openingTotal: fromCents(openingCents), assets: assets.map(toDTO) } });
 });
 
 // POST /api/fixed-assets -- admin/manager only (enforced at the route)
@@ -38,10 +45,16 @@ export const createFixedAsset = asyncHandler(async (req, res) => {
   if (!name) throw new ApiError(400, 'Asset name is required.');
   const value = Number(req.body.value);
   if (!Number.isFinite(value) || value < 0 || !Number.isSafeInteger(toCents(value))) throw new ApiError(400, 'Enter a valid value.');
+  // An opening balance is the company's own equipment: nobody is owed for it.
+  const opening = req.body.opening === true || req.body.opening === 'true';
+  const owedTo = opening ? '' : cleanName(req.body.owedTo);
+  if (!opening && !owedTo) throw new ApiError(400, 'Enter the name of the person it was bought from (who is owed the money).');
 
   const asset = await FixedAsset.create({
     name,
     valueCents: toCents(value),
+    owedTo,
+    opening,
     dateAdded: parseAssetDate(req.body.dateAdded),
     notes: String(req.body.notes || '').trim(),
     createdBy: req.user?._id || null,
@@ -62,6 +75,13 @@ export const updateFixedAsset = asyncHandler(async (req, res) => {
 
   asset.name = name;
   asset.valueCents = toCents(value);
+  if (req.body.opening !== undefined) asset.opening = req.body.opening === true || req.body.opening === 'true';
+  if (asset.opening) asset.owedTo = '';
+  else if (req.body.owedTo !== undefined || !asset.owedTo) {
+    const owedTo = cleanName(req.body.owedTo);
+    if (!owedTo) throw new ApiError(400, 'Enter the name of the person it was bought from (who is owed the money).');
+    asset.owedTo = owedTo;
+  }
   if (req.body.dateAdded !== undefined) asset.dateAdded = parseAssetDate(req.body.dateAdded);
   if (req.body.notes !== undefined) asset.notes = String(req.body.notes || '').trim();
   await asset.save();

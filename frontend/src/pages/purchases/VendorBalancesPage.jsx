@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Printer, Save, Wallet, Search, FilePlus2, Eye, History, Undo2 } from 'lucide-react';
 import client from '../../api/client.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { hasPermission } from '../../constants/permissions.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency, formatDate } from '../../utils/format.js';
 import Badge from '../../components/ui/Badge.jsx';
@@ -26,7 +27,9 @@ function todayString() {
 export default function VendorBalancesPage() {
   const { user } = useAuth();
   const toast = useToast();
-  const canPay = user?.role === 'admin' || user?.role === 'manager';
+  // Paying: the Pay suppliers permission. Cancelling: its own permission.
+  const canPay = hasPermission(user, 'paySuppliers');
+  const canCancel = hasPermission(user, 'cancelVendorPayments');
   const [data, setData] = useState(null);
   const [alloc, setAlloc] = useState({}); // supplierId -> typed text
   const [receipt, setReceipt] = useState({}); // supplierId -> supplier's receipt serial
@@ -76,7 +79,7 @@ export default function VendorBalancesPage() {
   const totalAllocated = round2(rows.reduce((s, r) => s + r.value, 0));
   const hasErrors = rows.some((r) => r.error);
   const allocatedCount = rows.filter((r) => r.value > 0).length;
-  const visible = q ? rows.filter((r) => r.name.toLowerCase().includes(q.toLowerCase())) : rows;
+  const visible = q ? rows.filter((r) => r.name.trim().toLowerCase().startsWith(q.trim().toLowerCase())) : rows;
 
   const setReceiptNo = (id, text) => {
     setReceipt((prev) => ({ ...prev, [String(id)]: text }));
@@ -124,25 +127,25 @@ export default function VendorBalancesPage() {
   return (
     <div>
       <div className="no-print">
-        <Link to="/purchases" className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <Link to="/purchases" className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> Back to Purchase Invoices
         </Link>
 
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-slate-900">Vendor Balance Summary</h1>
-            <p className="text-sm text-slate-500">
+            <h1 className="text-xl font-bold text-neutral-900">Vendor Balance Summary</h1>
+            <p className="text-sm text-neutral-500">
               Everything owed to suppliers, and how much to give each one.
-              {data.plan && <span className="ml-1 text-slate-400">· {data.plan.planNumber}</span>}
+              {data.plan && <span className="ml-1 text-neutral-400">· {data.plan.planNumber}</span>}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {showPaid ? (
               <>
-                {canPay && paidPlan && (
+                {canCancel && paidPlan && (
                   <Link
                     to={`/purchases/vendor-balances/${paidPlan.id}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200/80 bg-white px-3.5 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50"
                   >
                     <Undo2 className="h-4 w-4" /> Cancel payments
                   </Link>
@@ -160,7 +163,7 @@ export default function VendorBalancesPage() {
             <Button variant="secondary" onClick={() => printReport('portrait')}>
               <Printer className="h-4 w-4" /> Print
             </Button>
-            {!showPaid && canPay && (
+            {!showPaid && canPay && hasPermission(user, 'paySuppliers') && (
               <Button onClick={() => setPayOpen(true)} disabled={allocatedCount === 0 || hasErrors}>
                 <Wallet className="h-4 w-4" /> Pay allocations
               </Button>
@@ -177,18 +180,18 @@ export default function VendorBalancesPage() {
         {showPaid && paidPlan ? (
           <PaidPlan plan={paidPlan} />
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+          <div className="overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-4 py-3">
               <div className="relative w-full sm:w-72">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                 <Input className="pl-9" placeholder="Search supplier..." value={q} onChange={(e) => setQ(e.target.value)} />
               </div>
-              {dirty && <span className="text-xs font-medium text-amber-600">Unsaved changes</span>}
+              {dirty && <span className="text-xs font-medium text-brand-600">Unsaved changes</span>}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                  <tr className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
                     <th className="w-12 px-4 py-2.5 font-medium">#</th>
                     <th className="px-4 py-2.5 font-medium">Supplier</th>
                     <th className="px-4 py-2.5 text-right font-medium">Balance</th>
@@ -200,24 +203,24 @@ export default function VendorBalancesPage() {
                 <tbody>
                   {visible.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
+                      <td colSpan={6} className="px-4 py-10 text-center text-neutral-400">
                         {rows.length ? 'No supplier matches your search.' : 'No supplier is owed money right now.'}
                       </td>
                     </tr>
                   )}
                   {visible.map((r) => (
-                    <tr key={r.supplierId} className={`border-t border-slate-100 ${r.value > 0 ? 'bg-brand-50/40' : ''}`}>
-                      <td className="px-4 py-2 text-slate-400">{rows.indexOf(r) + 1}</td>
+                    <tr key={r.supplierId} className={`border-t border-neutral-100 ${r.value > 0 ? 'bg-brand-50/40' : ''}`}>
+                      <td className="px-4 py-2 text-neutral-400">{rows.indexOf(r) + 1}</td>
                       <td className="px-4 py-2">
-                        <p className="font-medium text-slate-800">{r.name}</p>
+                        <p className="font-medium text-neutral-800">{r.name}</p>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(r.owed)}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right font-semibold text-neutral-900">{formatCurrency(r.owed)}</td>
                       <td className="px-4 py-2">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
                             onClick={() => setOne(r.supplierId, String(r.owed))}
-                            className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                            className="rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
                           >
                             Full
                           </button>
@@ -233,7 +236,7 @@ export default function VendorBalancesPage() {
                             onChange={(e) => setOne(r.supplierId, e.target.value)}
                           />
                         </div>
-                        {r.error && <p className="mt-0.5 text-right text-xs text-rose-600">{r.error}</p>}
+                        {r.error && <p className="mt-0.5 text-right text-xs text-brand-600">{r.error}</p>}
                       </td>
                       <td className="px-4 py-2">
                         <Input
@@ -245,13 +248,13 @@ export default function VendorBalancesPage() {
                           onChange={(e) => setReceiptNo(r.supplierId, e.target.value)}
                         />
                       </td>
-                      <td className="whitespace-nowrap px-4 py-2 text-right text-slate-500">{formatCurrency(round2(r.owed - r.value))}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-neutral-500">{formatCurrency(round2(r.owed - r.value))}</td>
                     </tr>
                   ))}
                 </tbody>
                 {rows.length > 0 && (
                   <tfoot>
-                    <tr className="border-t-2 border-slate-900 bg-slate-50 font-bold text-slate-900">
+                    <tr className="border-t-2 border-neutral-900 bg-neutral-50 font-bold text-neutral-900">
                       <td className="px-4 py-3" colSpan={2}>
                         Total
                       </td>
@@ -266,16 +269,16 @@ export default function VendorBalancesPage() {
             </div>
           </div>
         )}
-        <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3.5">
-            <History className="h-4 w-4 text-slate-400" />
-            <h3 className="text-sm font-semibold text-slate-900">Saved sheets</h3>
-            <span className="text-xs text-slate-400">· every sheet is kept; open one to view or print it again</span>
+        <div className="mt-6 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+          <div className="flex items-center gap-2 border-b border-neutral-100 px-5 py-3.5">
+            <History className="h-4 w-4 text-neutral-400" />
+            <h3 className="text-sm font-semibold text-neutral-900">Saved sheets</h3>
+            <span className="text-xs text-neutral-400">· every sheet is kept; open one to view or print it again</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
                   <th className="px-5 py-2.5 font-medium">Sheet</th>
                   <th className="px-5 py-2.5 font-medium">Date</th>
                   <th className="px-5 py-2.5 font-medium">Suppliers</th>
@@ -288,23 +291,23 @@ export default function VendorBalancesPage() {
               <tbody>
                 {history.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-slate-400">
+                    <td colSpan={7} className="px-5 py-8 text-center text-neutral-400">
                       No sheets saved yet.
                     </td>
                   </tr>
                 )}
                 {history.map((h) => (
-                  <tr key={h.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                  <tr key={h.id} className="border-t border-neutral-100 hover:bg-neutral-50/60">
                     <td className="whitespace-nowrap px-5 py-2.5">
                       <Link to={`/purchases/vendor-balances/${h.id}`} className="font-semibold text-brand-600 hover:underline">
                         {h.planNumber}
                       </Link>
                     </td>
-                    <td className="whitespace-nowrap px-5 py-2.5 text-slate-600">{formatDate(h.status === 'PAID' ? h.paymentDate : h.updatedAt)}</td>
-                    <td className="px-5 py-2.5 text-slate-600">{h.supplierCount}</td>
-                    <td className="whitespace-nowrap px-5 py-2.5 text-right text-slate-600">{formatCurrency(h.totalOwed)}</td>
-                    <td className="whitespace-nowrap px-5 py-2.5 text-right font-semibold text-slate-900">
-                      {h.status === 'PAID' ? formatCurrency(h.totalPaid) : <span className="font-normal text-slate-400">{formatCurrency(h.totalAllocated)} planned</span>}
+                    <td className="whitespace-nowrap px-5 py-2.5 text-neutral-600">{formatDate(h.status === 'PAID' ? h.paymentDate : h.updatedAt)}</td>
+                    <td className="px-5 py-2.5 text-neutral-600">{h.supplierCount}</td>
+                    <td className="whitespace-nowrap px-5 py-2.5 text-right text-neutral-600">{formatCurrency(h.totalOwed)}</td>
+                    <td className="whitespace-nowrap px-5 py-2.5 text-right font-semibold text-neutral-900">
+                      {h.status === 'PAID' ? formatCurrency(h.totalPaid) : <span className="font-normal text-neutral-400">{formatCurrency(h.totalAllocated)} planned</span>}
                     </td>
                     <td className="px-5 py-2.5">
                       <Badge color={h.status === 'PAID' ? 'green' : h.status === 'CANCELLED' ? 'red' : 'amber'}>
@@ -314,7 +317,7 @@ export default function VendorBalancesPage() {
                     <td className="px-5 py-2.5 text-right">
                       <Link
                         to={`/purchases/vendor-balances/${h.id}`}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                        className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-xs font-semibold text-neutral-600 hover:bg-neutral-50"
                       >
                         <Eye className="h-3.5 w-3.5" /> View
                       </Link>
@@ -348,10 +351,10 @@ export default function VendorBalancesPage() {
 
 function Stat({ label, value, hint, accent }) {
   return (
-    <div className={`rounded-2xl border px-4 py-3 shadow-sm ${accent ? 'border-brand-200 bg-brand-50/60' : 'border-slate-200 bg-white'}`}>
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-1 text-xl font-bold ${accent ? 'text-brand-700' : 'text-slate-900'}`}>{value}</p>
-      <p className="text-xs text-slate-400">{hint}</p>
+    <div className={`rounded-2xl border px-4 py-3 shadow-sm ${accent ? 'border-brand-200 bg-brand-50/60' : 'border-neutral-200 bg-white'}`}>
+      <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">{label}</p>
+      <p className={`mt-1 text-xl font-bold ${accent ? 'text-brand-700' : 'text-neutral-900'}`}>{value}</p>
+      <p className="text-xs text-neutral-400">{hint}</p>
     </div>
   );
 }
@@ -401,7 +404,7 @@ function PayModal({ open, onClose, count, total, beforePay, onPaid }) {
       }
     >
       <div className="space-y-4">
-        <div className="rounded-xl bg-neutral-950 px-4 py-3 text-white">
+        <div className="rounded-xl surface-blue px-4 py-3 text-white">
           <p className="text-xs uppercase tracking-wide text-neutral-400">Paying {count} supplier{count === 1 ? '' : 's'}</p>
           <p className="text-2xl font-bold">{formatCurrency(total)}</p>
         </div>
@@ -418,7 +421,7 @@ function PayModal({ open, onClose, count, total, beforePay, onPaid }) {
         <FormField label="Payment date" required>
           <Input type="date" value={paymentDate} max={todayString()} onChange={(e) => setPaymentDate(e.target.value)} />
         </FormField>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-neutral-500">
           Each supplier is paid oldest invoice first and gets its own receipt. If anything fails, nothing is paid.
         </p>
       </div>

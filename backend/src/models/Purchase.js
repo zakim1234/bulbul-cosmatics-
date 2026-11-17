@@ -28,6 +28,12 @@ const purchaseSchema = new mongoose.Schema(
     notes: { type: String, default: '' },
     // Set when this invoice was created from a Manual Entry supplier invoice archive.
     sourceArchive: { type: mongoose.Schema.Types.ObjectId, ref: 'SupplierInvoiceArchive', default: null },
+    // What we already owed this supplier before using the system -- paid
+    // like any invoice, but not counted as goods bought in reports.
+    isOpeningBalance: { type: Boolean, default: false },
+    // Set when added from the Add Many sheet: that row's id, so a row sent
+    // twice is not added twice.
+    importKey: { type: String, default: undefined },
     status: { type: String, enum: ['completed', 'voided'], default: 'completed' },
     voidedAt: { type: Date, default: null },
     voidedReason: { type: String, default: '' },
@@ -38,6 +44,7 @@ const purchaseSchema = new mongoose.Schema(
 
 purchaseSchema.index({ supplier: 1, createdAt: -1 });
 purchaseSchema.index({ createdAt: -1 });
+purchaseSchema.index({ importKey: 1 }, { sparse: true });
 
 purchaseSchema.plugin(branchScoped);
 

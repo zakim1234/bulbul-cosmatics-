@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { listUsers, createUser, updateUser, setUserActive, listPermissionModules } from '../controllers/userController.js';
+import { listUsers, createUser, updateUser, setUserActive, listPermissionModules, deleteUser } from '../controllers/userController.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -13,5 +13,6 @@ router.get('/permission-modules', listPermissionModules);
 router.post('/', createUser);
 router.put('/:id', updateUser);
 router.patch('/:id/active', setUserActive);
+router.delete('/:id', deleteUser);
 
 export default router;

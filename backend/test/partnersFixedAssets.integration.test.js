@@ -147,10 +147,10 @@ test('FIXED ASSETS -- create, list, remove (soft), permissions', { timeout: 6000
 
     assert.equal((await request('/fixed-assets', null, 'GET', noAccess)).status, 403);
 
-    const created = await request('/fixed-assets', { name: 'Computer and Printer', value: 1370, dateAdded: '2026-09-01', notes: 'Office desk unit' });
+    const created = await request('/fixed-assets', { owedTo: 'Cali', name: 'Computer and Printer', value: 1370, dateAdded: '2026-09-01', notes: 'Office desk unit' });
     assert.equal(created.status, 201, JSON.stringify(created));
     assert.equal(created.data.value, 1370);
-    assert.equal((await request('/fixed-assets', { name: 'Shelves', value: 8341.5 })).status, 201);
+    assert.equal((await request('/fixed-assets', { owedTo: 'Cumar', name: 'Shelves', value: 8341.5 })).status, 201);
 
     assert.equal((await request('/fixed-assets', { name: 'x', value: 1 }, 'POST', readOnly)).status, 403, 'read-only user cannot create');
     const list = await request('/fixed-assets', null, 'GET', readOnly);
@@ -158,8 +158,9 @@ test('FIXED ASSETS -- create, list, remove (soft), permissions', { timeout: 6000
     assert.equal(list.data.assets.length, 2);
     assert.equal(list.data.total, 1370 + 8341.5);
 
-    assert.equal((await request('/fixed-assets', { name: '', value: 10 })).status, 400);
-    assert.equal((await request('/fixed-assets', { name: 'Bad', value: -5 })).status, 400);
+    assert.equal((await request('/fixed-assets', { owedTo: 'Cali', name: '', value: 10 })).status, 400);
+    assert.equal((await request('/fixed-assets', { owedTo: 'Cali', name: 'Bad', value: -5 })).status, 400);
+    assert.equal((await request('/fixed-assets', { name: 'No name owed', value: 5 })).status, 400);
 
     const remove = await request(`/fixed-assets/${created.data.id}/remove`, { reason: 'Sold' });
     assert.equal(remove.status, 200, JSON.stringify(remove));

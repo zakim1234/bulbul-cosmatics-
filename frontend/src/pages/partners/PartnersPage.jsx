@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Pencil, ArrowDownCircle, ArrowUpCircle, History, PieChart } from 'lucide-react';
+import { Plus, Pencil, ArrowDownCircle, ArrowUpCircle, History, PieChart, Landmark } from 'lucide-react';
 import client, { isAllBranchesView } from '../../api/client.js';
 import { useBranchNames } from '../../hooks/useBranchNames.js';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -29,6 +29,7 @@ function PartnerFormModal({ open, partner, onClose, onSaved }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
+  const [opening, setOpening] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -36,6 +37,7 @@ function PartnerFormModal({ open, partner, onClose, onSaved }) {
       setName(partner?.name || '');
       setPhone(partner?.phone || '');
       setNotes(partner?.notes || '');
+      setOpening('');
     }
   }, [open, partner]);
 
@@ -47,7 +49,19 @@ function PartnerFormModal({ open, partner, onClose, onSaved }) {
         await client.put(`/partners/${partner.id}`, { name, phone, notes });
         toast.success(`Partner "${name.trim()}" updated.`);
       } else {
-        await client.post('/partners', { name, phone, notes });
+        if (opening !== '' && !(Number(opening) >= 0)) return toast.error('Enter an opening balance of 0 or more.');
+        const res = await client.post('/partners', { name, phone, notes });
+        // The capital they already had, set straight after.
+        if (Number(opening) > 0) {
+          try {
+            await client.put(`/partners/${res.data.data.id}/opening-balance`, { amount: Number(opening) });
+          } catch (err) {
+            toast.error(`Partner added, but the opening balance was not saved: ${err.friendlyMessage || 'try again with Opening.'}`);
+            onSaved();
+            onClose();
+            return;
+          }
+        }
         toast.success(`Partner "${name.trim()}" added.`);
       }
       onSaved();
@@ -68,6 +82,11 @@ function PartnerFormModal({ open, partner, onClose, onSaved }) {
         <FormField label="Phone">
           <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" />
         </FormField>
+        {!isEdit && (
+          <FormField label="Opening balance (capital already in the business)">
+            <Input type="number" min="0" step="0.01" value={opening} onChange={(e) => setOpening(e.target.value)} placeholder="Optional -- no account receives it" />
+          </FormField>
+        )}
         <FormField label="Note">
           <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
         </FormField>
@@ -130,9 +149,9 @@ function CapitalModal({ open, mode, partner, onClose, onSaved }) {
           <Input value={partner.name} disabled />
         </FormField>
         {isWithdraw && (
-          <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-            <span className="text-slate-500">Current Equity: </span>
-            <span className="font-semibold text-slate-800">{formatCurrency(partner.currentEquity)}</span>
+          <div className="rounded-lg bg-neutral-50 px-3 py-2 text-sm">
+            <span className="text-neutral-500">Current Equity: </span>
+            <span className="font-semibold text-neutral-800">{formatCurrency(partner.currentEquity)}</span>
           </div>
         )}
         <FormField label={isWithdraw ? 'Amount to Withdraw' : 'Amount'} required>
@@ -153,6 +172,71 @@ function CapitalModal({ open, mode, partner, onClose, onSaved }) {
           </Button>
           <Button variant={isWithdraw ? 'danger' : 'primary'} loading={saving} onClick={save}>
             {isWithdraw ? 'Confirm Withdrawal' : 'Confirm Contribution'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// The capital a partner had before this system. No account receives it: the
+// money is already in the business. Can be changed later; 0 removes it.
+function OpeningBalanceModal({ partner, onClose, onSaved }) {
+  const toast = useToast();
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(today());
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (partner) {
+      setAmount(partner.openingBalance ? String(partner.openingBalance) : '');
+      setDate(today());
+      setNote('');
+    }
+  }, [partner]);
+
+  const save = async () => {
+    const amt = amount === '' ? 0 : Number(amount);
+    if (!(amt >= 0)) return toast.error('Enter an opening balance of 0 or more.');
+    setSaving(true);
+    try {
+      await client.put(`/partners/${partner.id}/opening-balance`, { amount: amt, date, note });
+      toast.success(amt > 0 ? `${partner.name}: opening balance ${formatCurrency(amt)}.` : `${partner.name}: opening balance removed.`);
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err.friendlyMessage || 'Could not save the opening balance.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!partner) return null;
+  return (
+    <Modal open={!!partner} onClose={onClose} title="Opening Balance" size="sm">
+      <div className="space-y-4">
+        <FormField label="Partner">
+          <Input value={partner.name} disabled />
+        </FormField>
+        <p className="rounded-lg bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
+          The capital this partner already had in the business before this system. It adds to their equity; <b>no account receives money</b>. Set 0 to remove it.
+        </p>
+        <FormField label="Opening balance" required>
+          <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus />
+        </FormField>
+        <FormField label="Date">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </FormField>
+        <FormField label="Note">
+          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional" />
+        </FormField>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button loading={saving} onClick={save}>
+            Save Opening Balance
           </Button>
         </div>
       </div>
@@ -196,18 +280,20 @@ function HistoryModal({ partner, onClose }) {
               <tr key={t.id}>
                 <Td>{formatDateTime(t.date)}</Td>
                 <Td>
-                  {t.type === 'CONTRIBUTION' ? (
+                  {t.type === 'OPENING_BALANCE' ? (
+                    <span className="font-medium text-neutral-900">Opening balance</span>
+                  ) : t.type === 'CONTRIBUTION' ? (
                     <span className="text-emerald-600">Contribution</span>
                   ) : t.type === 'PROFIT_SHARE' ? (
-                    <span className="font-medium text-slate-900">Profit share</span>
+                    <span className="font-medium text-neutral-900">Profit share</span>
                   ) : t.type === 'PROFIT_SHARE_CANCELLED' ? (
-                    <span className="text-slate-500">Profit share cancelled</span>
+                    <span className="text-neutral-500">Profit share cancelled</span>
                   ) : (
-                    <span className="text-rose-600">Withdrawal</span>
+                    <span className="text-brand-600">Withdrawal</span>
                   )}
                 </Td>
                 <Td className="font-medium">{formatCurrency(t.amount)}</Td>
-                <Td>{t.accountName}</Td>
+                <Td>{t.type === 'OPENING_BALANCE' ? '— (no account)' : t.accountName}</Td>
                 <Td>{formatCurrency(t.equityAfter)}</Td>
                 <Td>{t.note || '—'}</Td>
               </tr>
@@ -216,6 +302,15 @@ function HistoryModal({ partner, onClose }) {
         </TBody>
       </Table>
     </Modal>
+  );
+}
+
+function Figure({ label, value, strong = false }) {
+  return (
+    <div className="px-5 py-4">
+      <p className="eyebrow">{label}</p>
+      <p className={`figure mt-1 font-extrabold text-neutral-950 ${strong ? 'text-[26px]' : 'text-xl'}`}>{value}</p>
+    </div>
   );
 }
 
@@ -230,26 +325,24 @@ export default function PartnersPage() {
   // All branches together: partners grouped by branch, each branch with a
   // subtotal of what its partners put in.
   const grouped = overview;
-  const buildPartnerRows = () => {
+  const sumOf = (ps, f) => Math.round(ps.reduce((t, p) => t + (p[f] || 0), 0) * 100) / 100;
+  // One group per branch on the all-branches view; a single group otherwise.
+  const partnerGroups = () => {
     const list = data?.partners || [];
-    if (!grouped) return list.map((p) => ({ p }));
     const byBranch = new Map();
     for (const p of list) {
-      const k = String(p.branch || '');
+      const k = grouped ? String(p.branch || '') : 'all';
       if (!byBranch.has(k)) byBranch.set(k, []);
       byBranch.get(k).push(p);
     }
-    const sum = (ps, f) => Math.round(ps.reduce((t, p) => t + (p[f] || 0), 0) * 100) / 100;
-    return [...byBranch.entries()].flatMap(([k, ps]) => [
-      ...ps.map((p) => ({ p })),
-      { sub: true, key: `sub-${k}`, label: `${branchName(k || null)} total`, contributed: sum(ps, 'totalContributed'), withdrawn: sum(ps, 'totalWithdrawn'), equity: sum(ps, 'currentEquity'), profit: sum(ps, 'totalProfit') },
-    ]);
+    return [...byBranch.entries()].map(([key, partners]) => ({ key, partners, total: sumOf(partners, 'currentEquity') }));
   };
   const [data, setData] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editPartner, setEditPartner] = useState(null);
   const [capitalModal, setCapitalModal] = useState(null); // { mode, partner }
   const [historyPartner, setHistoryPartner] = useState(null);
+  const [openingPartner, setOpeningPartner] = useState(null);
 
   const load = useCallback(() => {
     client
@@ -270,10 +363,11 @@ export default function PartnersPage() {
         actions={
           <>
             {overview && (
-            <Link to="/partners/profit-sharing">
-              <Button variant="secondary">
-                <PieChart className="h-4 w-4" /> Share Year Profit
-              </Button>
+            <Link
+              to="/partners/profit-sharing"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-semibold text-neutral-800 hover:border-neutral-300"
+            >
+              <PieChart className="h-4 w-4" /> Share Year Profit
             </Link>
             )}
             {canManage && (
@@ -285,77 +379,92 @@ export default function PartnersPage() {
         }
       />
 
-      <div className="mb-5 grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-        <StatCard label="Total Partners' Equity" value={data ? formatCurrency(data.totalEquity) : '…'} />
-        <StatCard label="Partners" value={data ? data.partners.length : '…'} />
-      </div>
+      {data === null ? (
+        <p className="py-16 text-center text-sm text-neutral-400">Loading…</p>
+      ) : (
+        <>
+          {/* One quiet strip of figures */}
+          <div className="mb-6 grid grid-cols-2 divide-neutral-100 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white sm:grid-cols-4 sm:divide-x">
+            <Figure label="Total capital" value={formatCurrency(data.totalEquity)} strong />
+            <Figure label="Partners" value={data.partners.length} />
+            <Figure label={grouped ? 'Branches' : 'Put in'} value={grouped ? partnerGroups().length : formatCurrency(sumOf(data.partners, 'totalContributed'))} />
+            <Figure label="Profit received" value={formatCurrency(sumOf(data.partners, 'totalProfit'))} />
+          </div>
 
-      <Table>
-        <THead>
-          <tr>
-            <Th>Name</Th>
-            {overview && <Th>Branch</Th>}
-            <Th>Total Contributed</Th>
-            <Th>Total Withdrawn</Th>
-            <Th>Current Equity</Th>
-            <Th>Profit Received</Th>
-            {showActions && <Th />}
-          </tr>
-        </THead>
-        <TBody>
-          {data === null ? (
-            <TableLoading colSpan={7} />
-          ) : data.partners.length === 0 ? (
-            <TableEmpty colSpan={7} message="No partners yet." />
+          {data.partners.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-neutral-200 bg-white py-14 text-center text-sm text-neutral-400">No partners yet.</div>
           ) : (
-            buildPartnerRows().map((r) =>
-              r.sub ? (
-                <tr key={r.key} className="border-b-2 border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700">
-                  <Td>{r.label}</Td>
-                  <Td />
-                  <Td>{formatCurrency(r.contributed)}</Td>
-                  <Td>{formatCurrency(r.withdrawn)}</Td>
-                  <Td>{formatCurrency(r.equity)}</Td>
-                  <Td>{formatCurrency(r.profit)}</Td>
-                  <Td />
-                </tr>
-              ) : ((p) => (
-              <tr key={p.id}>
-                <Td className="font-medium text-slate-900">{p.name}</Td>
-                {overview && <Td className="text-slate-500">{branchName(p.branch)}</Td>}
-                <Td>{formatCurrency(p.totalContributed)}</Td>
-                <Td>{formatCurrency(p.totalWithdrawn)}</Td>
-                <Td className="font-semibold">{formatCurrency(p.currentEquity)}</Td>
-                <Td>{formatCurrency(p.totalProfit || 0)}</Td>
-                {showActions && (
-                  <Td>
-                    <div className="flex justify-end gap-1.5">
-                      {canManage && (
-                        <Button size="sm" variant="secondary" onClick={() => setEditPartner(p)}>
-                          <Pencil className="h-3.5 w-3.5" /> Edit
-                        </Button>
-                      )}
-                      <Button size="sm" variant="secondary" onClick={() => setHistoryPartner(p)} title="History">
-                        <History className="h-3.5 w-3.5" /> History
-                      </Button>
-                      {canManage && (
-                      <>
-                      <Button size="sm" variant="secondary" onClick={() => setCapitalModal({ mode: 'contribute', partner: p })}>
-                        <ArrowDownCircle className="h-3.5 w-3.5 text-emerald-600" /> Contribute
-                      </Button>
-                      <Button size="sm" variant="secondary" onClick={() => setCapitalModal({ mode: 'withdraw', partner: p })}>
-                        <ArrowUpCircle className="h-3.5 w-3.5 text-rose-600" /> Withdraw
-                      </Button>
-                      </>
-                      )}
+            partnerGroups().map((g) => (
+              <section key={g.key} className="mb-4 overflow-hidden rounded-2xl border border-neutral-200/80 bg-white">
+                {grouped && (
+                  <header className="flex items-end justify-between border-b border-neutral-100 px-5 py-3.5">
+                    <div>
+                      <p className="eyebrow">Branch</p>
+                      <h3 className="text-[15px] font-bold text-neutral-950">{branchName(g.key || null)}</h3>
                     </div>
-                  </Td>
+                    <div className="text-right">
+                      <p className="eyebrow">Capital</p>
+                      <p className="figure text-lg font-extrabold text-neutral-950">{formatCurrency(g.total)}</p>
+                    </div>
+                  </header>
                 )}
-              </tr>
-            ))(r.p))
+                <ul className="divide-y divide-neutral-100">
+                  {g.partners.map((p) => {
+                    const share = g.total > 0 ? Math.round((p.currentEquity / g.total) * 1000) / 10 : 0;
+                    return (
+                      <li key={p.id} className="flex flex-wrap items-center gap-x-5 gap-y-3 px-5 py-3.5">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-[11px] font-bold uppercase text-neutral-600">
+                          {p.name.slice(0, 2)}
+                        </span>
+                        <div className="min-w-[150px] flex-1">
+                          <p className="font-semibold text-neutral-950">{p.name}</p>
+                          <p className="text-xs text-neutral-400">
+                            {p.openingBalance > 0 && `Opening ${formatCurrency(p.openingBalance)} · `}
+                            Put in {formatCurrency(p.totalContributed)}
+                            {p.totalWithdrawn > 0 && ` · took out ${formatCurrency(p.totalWithdrawn)}`}
+                            {p.totalProfit > 0 && ` · profit ${formatCurrency(p.totalProfit)}`}
+                          </p>
+                        </div>
+                        <div className="w-36">
+                          <div className="flex items-baseline justify-between text-[11px]">
+                            <span className="text-neutral-400">Share</span>
+                            <span className="figure font-semibold text-neutral-700">{share}%</span>
+                          </div>
+                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-neutral-100">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, share)}%` }} />
+                          </div>
+                        </div>
+                        <p className="figure w-32 text-right text-base font-extrabold text-neutral-950">{formatCurrency(p.currentEquity)}</p>
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <Button size="sm" variant="secondary" onClick={() => setHistoryPartner(p)}>
+                            <History className="h-3.5 w-3.5" /> History
+                          </Button>
+                          {canManage && (
+                            <>
+                              <Button size="sm" variant="secondary" onClick={() => setEditPartner(p)}>
+                                <Pencil className="h-3.5 w-3.5" /> Edit
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => setOpeningPartner(p)}>
+                                <Landmark className="h-3.5 w-3.5" /> Opening
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => setCapitalModal({ mode: 'contribute', partner: p })}>
+                                <ArrowDownCircle className="h-3.5 w-3.5" /> Contribute
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => setCapitalModal({ mode: 'withdraw', partner: p })}>
+                                <ArrowUpCircle className="h-3.5 w-3.5" /> Withdraw
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))
           )}
-        </TBody>
-      </Table>
+        </>
+      )}
 
       <PartnerFormModal open={addOpen} onClose={() => setAddOpen(false)} onSaved={load} />
       <PartnerFormModal open={!!editPartner} partner={editPartner} onClose={() => setEditPartner(null)} onSaved={load} />
@@ -367,6 +476,7 @@ export default function PartnersPage() {
         onSaved={load}
       />
       <HistoryModal partner={historyPartner} onClose={() => setHistoryPartner(null)} />
+      <OpeningBalanceModal partner={openingPartner} onClose={() => setOpeningPartner(null)} onSaved={load} />
     </div>
   );
 }

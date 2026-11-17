@@ -1,15 +1,17 @@
 import mongoose from 'mongoose';
 import SalarySheet from '../models/SalarySheet.js';
 import User from '../models/User.js';
+import Worker from '../models/Worker.js';
 import Account from '../models/Account.js';
 import Expense from '../models/Expense.js';
+import Liability from '../models/Liability.js';
 import { nextSequence } from '../models/Counter.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { toCents, fromCents } from '../utils/money.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { logAudit } from '../services/auditService.js';
-import { postExpense, voidExpenseDoc } from '../services/expenseService.js';
+import { postExpense, voidExpenseDoc, chargeExpenseLater } from '../services/expenseService.js';
 import { resolveExpenseCategory } from '../services/expenseCategoryService.js';
 import { parseExpenseDate } from './expenseController.js';
 import { currentBranch } from '../services/branchContext.js';
@@ -25,15 +27,18 @@ function sheetToDTO(s) {
     status: s.status,
     note: s.note,
     rows: s.rows.map((r) => ({
-      user: r.user,
+      user: r.user || r.worker, // the person's id, user or worker
+      kind: r.worker ? 'worker' : 'user',
       name: r.name,
       role: r.role,
       amount: fromCents(r.amountCents),
       expense: r.expense,
       expenseNumber: r.expenseNumber,
+      liability: r.liability || null,
     })),
     total: fromCents(s.rows.reduce((t, r) => t + r.amountCents, 0)),
     paymentAccountName: s.paymentAccountName,
+    toLiabilities: !!s.toLiabilities,
     paymentDate: s.paymentDate,
     paidAt: s.paidAt,
     paidByName: s.paidByName,
@@ -49,15 +54,19 @@ function sheetToDTO(s) {
 // sheet being prepared (if any) and the last paid sheet, whose amounts
 // pre-fill a new month.
 export const getSalarySheet = asyncHandler(async (req, res) => {
-  const [users, open, lastPaid] = await Promise.all([
+  const [users, workers, open, lastPaid] = await Promise.all([
     User.find({ active: { $ne: false }, ...(currentBranch() ? { branch: currentBranch() } : {}) }).select('name username role').sort({ name: 1 }),
+    Worker.find({ active: true }).sort({ name: 1 }),
     SalarySheet.findOne({ status: 'OPEN' }).sort({ createdAt: -1 }),
     SalarySheet.findOne({ status: 'PAID' }).sort({ paidAt: -1 }),
   ]);
   res.json({
     success: true,
     data: {
-      people: users.map((u) => ({ userId: u._id, name: u.name, username: u.username, role: u.role })),
+      people: [
+        ...users.map((u) => ({ userId: u._id, kind: 'user', name: u.name, username: u.username, role: u.role })),
+        ...workers.map((w) => ({ userId: w._id, kind: 'worker', name: w.name, username: '', role: w.job || 'Worker', phone: w.phone })),
+      ],
       open: sheetToDTO(open),
       lastPaid: sheetToDTO(lastPaid),
     },
@@ -72,15 +81,23 @@ export const saveSalarySheet = asyncHandler(async (req, res) => {
   if (String(note).length > 500) throw new ApiError(400, 'Note is too long (500 characters max).');
   const ids = rows.map((r) => String(r.userId || ''));
   if (new Set(ids).size !== ids.length) throw new ApiError(400, 'Each person can appear only once.');
-  const users = new Map((await User.find({ _id: { $in: ids.filter((id) => mongoose.isValidObjectId(id)) } }).select('name role')).map((u) => [String(u._id), u]));
+  const validIds = ids.filter((id) => mongoose.isValidObjectId(id));
+  const [userDocs, workerDocs] = await Promise.all([
+    User.find({ _id: { $in: validIds } }).select('name role'),
+    Worker.find({ _id: { $in: validIds } }).select('name job'),
+  ]);
+  const people = new Map([
+    ...userDocs.map((u) => [String(u._id), { user: u._id, worker: null, name: u.name, role: u.role }]),
+    ...workerDocs.map((w) => [String(w._id), { user: null, worker: w._id, name: w.name, role: w.job || 'Worker' }]),
+  ]);
   const built = [];
   for (const r of rows) {
-    const u = users.get(String(r.userId));
-    if (!u) throw new ApiError(400, 'One of the people on the sheet no longer exists.');
+    const p = people.get(String(r.userId));
+    if (!p) throw new ApiError(400, 'One of the people on the sheet no longer exists.');
     const amount = Number(r.amount);
-    if (!Number.isFinite(amount) || amount < 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, `${u.name}: enter a valid salary.`);
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isSafeInteger(toCents(amount))) throw new ApiError(400, `${p.name}: enter a valid salary.`);
     if (toCents(amount) === 0) continue;
-    built.push({ user: u._id, name: u.name, role: u.role, amountCents: toCents(amount) });
+    built.push({ ...p, amountCents: toCents(amount) });
   }
   let sheet = await SalarySheet.findOne({ status: 'OPEN' }).sort({ createdAt: -1 });
   if (!sheet) {
@@ -96,9 +113,13 @@ export const saveSalarySheet = asyncHandler(async (req, res) => {
 
 // POST /api/salaries/sheet/pay -- pays every line of the open sheet from one
 // account, each as a "Salaries" expense, all-or-nothing.
+// { toLiabilities: true }: charged now, paid later -- no account moves; each
+// line becomes a "Salaries" liability (an expense now, on the Liabilities
+// page) to be paid from an account when the money comes.
 export const paySalarySheet = asyncHandler(async (req, res) => {
   const { paymentAccountId } = req.body;
-  if (!paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
+  const toLiabilities = req.body.toLiabilities === true;
+  if (!toLiabilities && !paymentAccountId) throw new ApiError(400, 'Please select a payment account.');
   const paymentDate = parseExpenseDate(req.body.paymentDate);
   if (paymentDate > new Date(Date.now() + 12 * 3600 * 1000)) throw new ApiError(400, 'The payment date cannot be in the future.');
   const category = await resolveExpenseCategory('Salaries');
@@ -106,6 +127,25 @@ export const paySalarySheet = asyncHandler(async (req, res) => {
   const sheet = await runInTransaction(async (session) => {
     const open = await SalarySheet.findOne({ status: 'OPEN' }).sort({ createdAt: -1 }).session(session);
     if (!open || !open.rows.some((r) => r.amountCents > 0)) throw new ApiError(400, 'There are no salaries to pay. Enter and save the amounts first.');
+    if (toLiabilities) {
+      for (const row of open.rows) {
+        if (row.amountCents <= 0) continue;
+        // A "Salaries" expense now (EXP number), its line on Liabilities.
+        const { expense, liability } = await chargeExpenseLater(session, { category, amountCents: row.amountCents, date: paymentDate, name: `Salary ${open.period} -- ${row.name}`, note: `Salary ${open.period} -- ${row.name} (${open.sheetNumber})`, user: req.user });
+        row.expense = expense._id;
+        row.expenseNumber = expense.expenseNumber;
+        row.liability = liability._id;
+      }
+      open.status = 'PAID';
+      open.toLiabilities = true;
+      open.paymentAccount = null;
+      open.paymentAccountName = 'Liabilities (to pay later)';
+      open.paymentDate = paymentDate;
+      open.paidAt = new Date();
+      open.paidByName = req.user?.name || '';
+      await open.save({ session });
+      return open;
+    }
     const account = await Account.findById(paymentAccountId).session(session);
     if (!account || !account.isActive) throw new ApiError(400, 'Selected payment account is not available.');
     for (const row of open.rows) {
@@ -166,12 +206,20 @@ export const cancelSalarySheet = asyncHandler(async (req, res) => {
     if (!s) throw new ApiError(404, 'Salary sheet not found.');
     if (s.status !== 'PAID') throw new ApiError(409, s.status === 'CANCELLED' ? 'This sheet is already cancelled.' : 'This sheet has not been paid yet.');
     let refunded = 0;
+    // Charged to Liabilities: those lines go with their expenses, unless
+    // some were already paid there.
+    if (s.toLiabilities) {
+      const ids = s.rows.map((r) => r.liability).filter(Boolean);
+      const paid = await Liability.find({ _id: { $in: ids }, paidCents: { $gt: 0 } }).select('name').session(session).lean();
+      if (paid.length) throw new ApiError(400, `Part of it was already paid on the Liabilities page (${paid.map((l) => l.name).join(', ')}). Undo those payments first.`);
+      await Liability.deleteMany({ _id: { $in: ids } }, { session });
+    }
     for (const row of s.rows) {
       if (!row.expense) continue;
       const exp = await Expense.findById(row.expense).session(session);
       if (!exp || exp.status === 'VOIDED') continue;
       await voidExpenseDoc(session, exp, { reason: reason || `${s.sheetNumber} cancelled`, user: req.user });
-      refunded += exp.amountCents;
+      if (!exp.liability) refunded += exp.amountCents; // only money that came back
     }
     s.status = 'CANCELLED';
     s.cancelledAt = new Date();
@@ -196,15 +244,16 @@ export const getSalaryStatement = asyncHandler(async (req, res) => {
     if (req.query.from) filter.paymentDate.$gte = parseExpenseDate(req.query.from);
     if (req.query.to) filter.paymentDate.$lte = new Date(parseExpenseDate(req.query.to).getTime() + 12 * 3600 * 1000);
   }
-  if (userId) filter['rows.user'] = userId;
+  if (userId) filter.$or = [{ 'rows.user': userId }, { 'rows.worker': userId }];
   const sheets = await SalarySheet.find(filter).sort({ paymentDate: 1, createdAt: 1 });
 
   const lines = [];
   for (const s of sheets) {
     for (const r of s.rows) {
-      if (userId && String(r.user) !== String(userId)) continue;
+      const personId = r.user || r.worker;
+      if (userId && String(personId) !== String(userId)) continue;
       lines.push({
-        user: r.user,
+        user: personId,
         name: r.name,
         role: r.role,
         period: s.period,
@@ -235,4 +284,38 @@ export const getSalaryStatement = asyncHandler(async (req, res) => {
       range: { from: req.query.from || null, to: req.query.to || null },
     },
   });
+});
+
+// Workers with no login (porters, cleaners...), paid on the salary sheet.
+const workerToDTO = (w) => ({ id: w._id, name: w.name, job: w.job, phone: w.phone, active: w.active, createdAt: w.createdAt });
+function workerFields(body) {
+  const name = String(body.name || '').trim();
+  if (!name) throw new ApiError(400, 'Enter the worker\'s name.');
+  if (name.length > 100) throw new ApiError(400, 'Name is too long.');
+  return { name, job: String(body.job || '').trim().slice(0, 60), phone: String(body.phone || '').trim().slice(0, 30) };
+}
+
+// GET /api/salaries/workers -- every worker, active first.
+export const listWorkers = asyncHandler(async (req, res) => {
+  const workers = await Worker.find().sort({ active: -1, name: 1 });
+  res.json({ success: true, data: workers.map(workerToDTO) });
+});
+
+// POST /api/salaries/workers { name, job, phone }
+export const createWorker = asyncHandler(async (req, res) => {
+  const w = await Worker.create({ ...workerFields(req.body), createdBy: req.user?._id || null });
+  await logAudit({ user: req.user, action: 'worker.create', entityType: 'Worker', entityId: w._id, details: { name: w.name, job: w.job } });
+  res.status(201).json({ success: true, data: workerToDTO(w) });
+});
+
+// PUT /api/salaries/workers/:id { name, job, phone, active }
+export const updateWorker = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) throw new ApiError(404, 'Worker not found.');
+  const w = await Worker.findById(req.params.id);
+  if (!w) throw new ApiError(404, 'Worker not found.');
+  Object.assign(w, workerFields({ name: req.body.name ?? w.name, job: req.body.job ?? w.job, phone: req.body.phone ?? w.phone }));
+  if (typeof req.body.active === 'boolean') w.active = req.body.active;
+  await w.save();
+  await logAudit({ user: req.user, action: 'worker.update', entityType: 'Worker', entityId: w._id, details: { name: w.name, active: w.active } });
+  res.json({ success: true, data: workerToDTO(w) });
 });

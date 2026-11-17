@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Printer, ArrowLeft, Pencil, XCircle, Undo2 } from 'lucide-react';
 import client from '../../api/client.js';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { hasPermission } from '../../constants/permissions.js';
+import { hasPermission, canChangeInvoice, canEditInvoice } from '../../constants/permissions.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency, formatDate, formatTime } from '../../utils/format.js';
 import { printA5 } from '../../utils/printA5.js';
@@ -54,19 +54,24 @@ export default function ReceiptPage() {
     }
   };
 
-  if (error) return <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-700">{error}</div>;
+  if (error) return <div className="rounded-lg bg-brand-50 p-4 text-sm text-brand-700">{error}</div>;
   if (!sale) return <PageSpinner />;
 
-  const currentOutstanding = sale.newBalance;
 
   return (
     <div>
       <div className="mb-4 flex items-center justify-between no-print">
-        <button type="button" onClick={goBack} className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700">
+        <button type="button" onClick={goBack} className="flex items-center gap-1.5 text-sm font-medium text-neutral-500 hover:text-neutral-700">
           <ArrowLeft className="h-4 w-4" /> {backLabel}
         </button>
         <div className="flex gap-2">
-          {sale.status === 'DRAFT' && (
+          {/* After Close Day too: the old version is undone and the new one saved. */}
+          {sale.status === 'CONFIRMED' && canEditInvoice(user, sale) && (
+            <Button variant="secondary" onClick={() => navigate(`/pos?edit=${sale.id}`)}>
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          )}
+          {sale.status === 'DRAFT' && canChangeInvoice(user, sale) && (
             <>
               {hasPermission(user, 'editInvoices') && (
                 <Button variant="secondary" onClick={() => navigate(`/pos?edit=${sale.id}`)}>
@@ -97,9 +102,17 @@ export default function ReceiptPage() {
         onClose={() => setCancelOpen(false)}
       />
 
+      {sale.editedByName && (
+        <div className="mx-auto mb-3 max-w-[148mm] rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800 no-print">
+          Edited by <b>{sale.editedByName}</b>
+          {sale.editedAt ? ` · ${formatDate(sale.editedAt)} ${formatTime(sale.editedAt)}` : ''}
+          {(sale.lockedBySuperAdmin || sale.lockedByAdmin) && !canChangeInvoice(user, sale) && ` -- ${sale.editedByName || 'an admin'} corrected it, so you can see it but not change it.`}
+        </div>
+      )}
+
       <div
         id="print-area"
-        className="mx-auto max-w-[148mm] rounded-2xl border border-slate-200 bg-white p-6 text-[13px] text-neutral-900 shadow-sm print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
+        className="mx-auto max-w-[148mm] rounded-2xl border border-neutral-200/80 bg-white p-6 text-[13px] text-neutral-900 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none"
       >
         <DocHeader
           compact
@@ -107,12 +120,12 @@ export default function ReceiptPage() {
           meta={<span className="font-semibold">{sale.receiptNumber}</span>}
         />
         {sale.status === 'DRAFT' && (
-          <p className="mt-2 text-center text-[11px] font-medium text-amber-600 no-print">
+          <p className="mt-2 text-center text-[11px] font-medium text-brand-600 no-print">
             This invoice is PENDING and will only become final when the business day is closed.
           </p>
         )}
         {sale.status === 'CANCELLED' && sale.cancelledReason && (
-          <p className="mt-2 text-center text-[11px] font-medium text-rose-600 no-print">Reason: {sale.cancelledReason}</p>
+          <p className="mt-2 text-center text-[11px] font-medium text-brand-600 no-print">Reason: {sale.cancelledReason}</p>
         )}
 
         <DocInfo
@@ -143,7 +156,7 @@ export default function ReceiptPage() {
           </tbody>
         </table>
 
-        {/* Short on purpose: total, what was paid, and what is still owed. */}
+        {/* Only the invoice total: no paid / previous balance / balance due. */}
         <DocSummary
           lines={[
             sale.discount > 0 && ['Subtotal', formatCurrency(sale.subtotal)],
@@ -151,32 +164,28 @@ export default function ReceiptPage() {
           ]}
           grand={['Total', formatCurrency(sale.total)]}
         />
-        <DocSummary
-          lines={[
-            [sale.paidAmount > 0 && sale.paymentAccountName ? `Paid (${sale.paymentAccountName})` : 'Paid', formatCurrency(sale.paidAmount)],
-            sale.previousBalance > 0 && ['Previous balance', formatCurrency(sale.previousBalance)],
-          ]}
-          owed={currentOutstanding > 0 ? ['Balance due', formatCurrency(currentOutstanding)] : null}
-        />
 
         {sale.notes && (
           <p className="mt-4 rounded-md bg-neutral-50 px-3 py-2 text-xs text-neutral-600">
             <span className="font-semibold">Notes:</span> {sale.notes}
           </p>
         )}
-        <DocFooter>Thank you for your business!</DocFooter>
+        <DocFooter>
+          <p className="font-semibold italic text-emerald-700">{BUSINESS.slogan}</p>
+          <p>Thank you for your business!</p>
+        </DocFooter>
       </div>
 
       {sale.returns?.length > 0 && (
-        <div className="mx-auto mt-4 max-w-[148mm] rounded-2xl border border-slate-200 bg-white p-4 text-sm no-print">
-          <p className="mb-2 flex items-center gap-1.5 font-semibold text-slate-700">
+        <div className="mx-auto mt-4 max-w-[148mm] rounded-2xl border border-neutral-200/80 bg-white p-4 text-sm no-print">
+          <p className="mb-2 flex items-center gap-1.5 font-semibold text-neutral-700">
             <Undo2 className="h-4 w-4" /> Returns on This Invoice ({sale.returns.length})
           </p>
           <div className="space-y-1.5">
             {sale.returns.map((r, i) => (
-              <div key={i} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-xs">
-                <span className="text-slate-500">{formatDate(r.createdAt)} · {formatCurrency(r.amount)}</span>
-                <Link to={`/receipt/${sale.id}/return/${r.index}`} className="font-semibold text-brand-600 hover:underline">
+              <div key={i} className="flex items-center justify-between rounded-lg border border-neutral-100 px-3 py-2 text-xs">
+                <span className="text-neutral-500">{formatDate(r.createdAt)} · {formatCurrency(r.amount)}</span>
+                <Link to={`/receipt/${sale.id}/return/${r.index}`} state={{ fromInvoice: true }} className="font-semibold text-brand-600 hover:underline">
                   View / Print
                 </Link>
               </div>

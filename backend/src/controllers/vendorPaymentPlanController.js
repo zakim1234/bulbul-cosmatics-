@@ -9,7 +9,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { toCents, fromCents } from '../utils/money.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { logAudit } from '../services/auditService.js';
-import { paySupplier, cancelBulkPayment, OUTSTANDING } from '../services/supplierPaymentService.js';
+import { paySupplier, cancelBulkPayment, NET_OWED } from '../services/supplierPaymentService.js';
 import BulkPurchasePayment from '../models/BulkPurchasePayment.js';
 import { parsePaymentDate } from './purchaseController.js';
 
@@ -55,13 +55,9 @@ async function withReceiptStatus(plan) {
   return dto;
 }
 
-// What each supplier is owed right now (completed invoices with a balance).
+// What each supplier is owed right now, net of any credit they hold.
 async function owedBySupplier(session = null) {
-  const rows = await Purchase.aggregate([
-    { $match: OUTSTANDING },
-    { $group: { _id: '$supplier', name: { $first: '$supplierName' }, owedCents: { $sum: '$balanceCents' }, invoiceCount: { $sum: 1 } } },
-    { $sort: { name: 1 } },
-  ]).session(session);
+  const rows = await Purchase.aggregate([...NET_OWED, { $sort: { name: 1 } }]).session(session);
   return new Map(rows.map((r) => [String(r._id), r]));
 }
 

@@ -1,9 +1,9 @@
 const styles = {
-  slate: 'bg-slate-100 text-slate-700',
-  green: 'bg-emerald-100 text-emerald-700',
-  amber: 'bg-amber-100 text-amber-700',
-  red: 'bg-rose-100 text-rose-700',
-  blue: 'bg-neutral-900 text-white',
+  slate: 'bg-neutral-100 text-neutral-700',
+  green: 'bg-emerald-50 text-emerald-700',
+  amber: 'bg-brand-50 text-brand-700',
+  red: 'bg-brand-100 text-brand-800',
+  blue: 'bg-primary text-white',
 };
 
 export default function Badge({ color = 'slate', children, className = '' }) {

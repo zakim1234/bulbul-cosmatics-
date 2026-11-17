@@ -1,5 +1,14 @@
 export const BUSINESS = {
   name: 'Bulbul Cosmetics',
+  tagline: 'Your Health, Our Priority',
   addressLine: 'Mogadishu - Somalia',
-  phone: '+252613966868 / 621111116',
+  // The number customers call.
+  phone: '655247',
+  email: 'mumtazpharmacy@gmail.com',
+  // Where customers can send money, printed on documents.
+  payments: [
+    { label: 'EVC Plus', value: '*712*616285741*$#' },
+    { label: 'Salaam Bank', value: '37156842' },
+  ],
+  slogan: 'Hadafkeenu waa qancinta macaamiisha',
 };

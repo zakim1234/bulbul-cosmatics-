@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Printer } from 'lucide-react';
 import client from '../../api/client.js';
+import { fetchAll } from '../../api/fetchAll.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { formatCurrency, formatDate } from '../../utils/format.js';
 import { printReport } from '../../utils/printReport.js';
@@ -10,7 +11,6 @@ import Card from '../../components/ui/Card.jsx';
 import Button from '../../components/ui/Button.jsx';
 import Badge, { quotationStatusBadge } from '../../components/ui/Badge.jsx';
 import { FormField, Select } from '../../components/ui/Field.jsx';
-import Pagination from '../../components/ui/Pagination.jsx';
 import SharePdfButton from '../../components/SharePdfButton.jsx';
 import DocHeader, { DocInfo } from '../../components/docs/DocHeader.jsx';
 
@@ -30,8 +30,7 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    client
-      .get('/quotations', { params: { customer: customerId, status: status || undefined, page, limit: 20 } })
+    fetchAll('/quotations', { customer: customerId, status: status || undefined }).then((data) => ({ data }))
       .then((res) => { if (active) setResult(res.data); })
       .catch((err) => { if (active) { setResult(null); toast.error(err.friendlyMessage || 'Failed to load quotations.'); } })
       .finally(() => { if (active) setLoading(false); });
@@ -65,11 +64,11 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
             (see the "View / Print" link) rather than being dumped here. */}
         <Card className="no-print" title={`Quotations (${result?.pagination.total ?? quotations.length})`}>
           {loading ? (
-            <p className="py-8 text-center text-sm text-slate-400">Loading...</p>
+            <p className="py-8 text-center text-sm text-neutral-400">Loading...</p>
           ) : !result ? (
-            <p className="py-8 text-center text-sm text-slate-400">Unable to load quotations. Please refresh.</p>
+            <p className="py-8 text-center text-sm text-neutral-400">Unable to load quotations. Please refresh.</p>
           ) : quotations.length === 0 ? (
-            <p className="py-8 text-center text-sm text-slate-400">
+            <p className="py-8 text-center text-sm text-neutral-400">
               {status ? `No ${status.toLowerCase()} quotations for this customer.` : 'No quotations found for this customer yet.'}
             </p>
           ) : (
@@ -77,18 +76,18 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
               {quotations.map((q) => {
                 const badge = quotationStatusBadge(q.status);
                 return (
-                  <div key={q.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-100 p-3">
+                  <div key={q.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-100 p-3">
                     <div>
                       <Link to={`/quotations/${q.id}`} className="text-sm font-semibold text-brand-600 hover:underline">
                         {q.quotationNumber}
                       </Link>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-neutral-400">
                         {formatDate(q.date)} · Expires {formatDate(q.expiryDate)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
                       <Badge color={badge.color}>{badge.label}</Badge>
-                      <span className="text-sm font-semibold tabular-nums text-slate-800">{formatCurrency(q.grandTotal)}</span>
+                      <span className="text-sm font-semibold tabular-nums text-neutral-800">{formatCurrency(q.grandTotal)}</span>
                       <Link to={`/quotations/${q.id}`} className="text-xs font-semibold text-brand-600 hover:underline">
                         View / Print
                       </Link>
@@ -98,7 +97,6 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
               })}
             </div>
           )}
-          {result && <div className="mt-3 no-print"><Pagination {...result.pagination} onChange={setPage} /></div>}
         </Card>
 
         {/* Print-only: a full itemized document per quotation so a filtered
@@ -113,21 +111,21 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
             <div key={q.id} className="mt-4" style={{ breakInside: 'avoid' }}>
               <div className="my-2 flex flex-wrap items-start justify-between gap-4 text-xs">
                 <div>
-                  <p className="text-slate-400">Quotation</p>
-                  <p className="font-semibold text-slate-800">{q.quotationNumber}</p>
-                  <p className="mt-1 text-slate-400">Status</p>
-                  <p className="font-semibold text-slate-800">{q.status}</p>
+                  <p className="text-neutral-400">Quotation</p>
+                  <p className="font-semibold text-neutral-800">{q.quotationNumber}</p>
+                  <p className="mt-1 text-neutral-400">Status</p>
+                  <p className="font-semibold text-neutral-800">{q.status}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-slate-400">Date</p>
-                  <p className="font-semibold text-slate-800">{formatDate(q.date)}</p>
-                  <p className="mt-1 text-slate-400">Expiry Date</p>
-                  <p className="font-semibold text-slate-800">{formatDate(q.expiryDate)}</p>
+                  <p className="text-neutral-400">Date</p>
+                  <p className="font-semibold text-neutral-800">{formatDate(q.date)}</p>
+                  <p className="mt-1 text-neutral-400">Expiry Date</p>
+                  <p className="font-semibold text-neutral-800">{formatDate(q.expiryDate)}</p>
                 </div>
               </div>
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-y border-slate-300">
+                  <tr className="border-y border-neutral-300">
                     {['No', 'Item', 'Qty', 'Unit Price', 'Discount', 'Line Total'].map((h) => (
                       <th className="p-1.5 font-medium" key={h}>{h}</th>
                     ))}
@@ -135,7 +133,7 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
                 </thead>
                 <tbody>
                   {q.items.map((it, i) => (
-                    <tr key={it.itemId} className="border-b border-slate-100">
+                    <tr key={it.itemId} className="border-b border-neutral-100">
                       <td className="p-1.5">{i + 1}</td>
                       <td className="p-1.5">{it.name}</td>
                       <td className="p-1.5">{it.quantity}</td>
@@ -149,10 +147,10 @@ export default function CustomerQuotationsSection({ customerId, customer }) {
               <div className="ml-auto mt-1.5 max-w-xs space-y-1 text-xs">
                 <p className="flex justify-between"><span>Subtotal</span><span>{formatCurrency(q.subtotal)}</span></p>
                 <p className="flex justify-between"><span>Total Discount</span><span>{formatCurrency(q.totalDiscount)}</span></p>
-                <p className="flex justify-between border-t border-slate-200 pt-1 font-bold"><span>Grand Total</span><span>{formatCurrency(q.grandTotal)}</span></p>
+                <p className="flex justify-between border-t border-neutral-200 pt-1 font-bold"><span>Grand Total</span><span>{formatCurrency(q.grandTotal)}</span></p>
               </div>
-              {q.notes && <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-slate-600">Notes: {q.notes}</p>}
-              <div className="mt-3 border-t border-dashed border-slate-300" />
+              {q.notes && <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-neutral-600">Notes: {q.notes}</p>}
+              <div className="mt-3 border-t border-dashed border-neutral-300" />
             </div>
           ))}
         </div>

@@ -10,7 +10,7 @@ const schema = new mongoose.Schema(
     paymentNumber: { type: String, required: true, unique: true }, // PPAY-YYYY-NNNNNN
     purchase: { type: mongoose.Schema.Types.ObjectId, ref: 'Purchase', required: true },
     amountCents: { type: Number, required: true, min: 0 },
-    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', required: true },
+    paymentAccount: { type: mongoose.Schema.Types.ObjectId, ref: 'Account', default: null }, // null: an offset (no money moved)
     paymentAccountName: { type: String, default: '' },
     accountTransaction: { type: mongoose.Schema.Types.ObjectId, ref: 'AccountTransaction', default: null },
     previousBalanceCents: { type: Number, required: true }, // Purchase.balanceCents immediately before this payment
@@ -25,6 +25,10 @@ const schema = new mongoose.Schema(
     bulkPayment: { type: mongoose.Schema.Types.ObjectId, ref: 'BulkPurchasePayment', default: null },
     editedAt: { type: Date, default: null },
     status: { type: String, enum: ['POSTED', 'REVERSED'], default: 'POSTED' },
+    // A discount the supplier gave when paying (e.g. owed 1000, paid 800,
+    // 200 off): it clears the invoice like a payment but no money moves --
+    // it is Discount Received (income) on the Profit & Loss.
+    discount: { type: Boolean, default: false },
     reversedAt: { type: Date, default: null },
     reversalReason: { type: String, default: '' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

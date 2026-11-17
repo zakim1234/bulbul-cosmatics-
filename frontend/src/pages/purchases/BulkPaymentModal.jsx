@@ -31,6 +31,8 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
   const [percentage, setPercentage] = useState(null);
   const [customPct, setCustomPct] = useState('');
   const [amount, setAmount] = useState('');
+  // A discount the supplier gave (owed 1000: pay 800, discount 200).
+  const [discount, setDiscount] = useState('');
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayString());
@@ -47,6 +49,7 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
     setPercentage(null);
     setCustomPct('');
     setAmount('');
+    setDiscount('');
     setAccountId('');
     setPaymentDate(todayString());
     setNote('');
@@ -92,8 +95,9 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
 
   // Preview: oldest first, exactly as the server will apply it.
   const amountNum = Number(amount) || 0;
+  const discountNum = Math.max(0, Number(discount) || 0);
   const preview = [];
-  let left = amountNum;
+  let left = round2(amountNum + discountNum);
   for (const inv of invoices) {
     if (!selected.has(inv.id)) continue;
     const take = round2(Math.min(Math.max(left, 0), inv.balanceDue));
@@ -104,7 +108,7 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
 
   let problem = '';
   if (supplierId && selected.size === 0) problem = 'Tick at least one invoice.';
-  else if (amountNum > totalOwed) problem = `Amount is more than the selected invoices owe (${formatCurrency(totalOwed)}).`;
+  else if (round2(amountNum + discountNum) > totalOwed) problem = discountNum ? `Amount plus discount is more than the selected invoices owe (${formatCurrency(totalOwed)}).` : `Amount is more than the selected invoices owe (${formatCurrency(totalOwed)}).`;
   const canSave = supplierId && selected.size > 0 && amountNum > 0 && !problem && accountId && !saving;
 
   const save = async () => {
@@ -114,13 +118,14 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
         supplierId,
         purchaseIds: [...selected],
         amount: amountNum,
+        discount: discountNum || undefined,
         percentage,
         paymentAccountId: accountId,
         paymentDate,
         note,
         receiptNo,
       });
-      toast.success(`${res.data.data.bulkNumber} saved — ${formatCurrency(res.data.data.amount)} paid to ${res.data.data.supplierName}.`);
+      toast.success(`${res.data.data.bulkNumber} saved — ${formatCurrency(res.data.data.amount)} paid to ${res.data.data.supplierName}${res.data.data.discount ? ` + ${formatCurrency(res.data.data.discount)} discount` : ''}.`);
       onPaid(res.data.data);
     } catch (err) {
       toast.error(err.friendlyMessage || 'Could not save the bulk payment.');
@@ -162,8 +167,8 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
 
         {supplierId && (
           <>
-            <div className="overflow-hidden rounded-xl border border-slate-200">
-              <div className="flex items-center justify-between bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="overflow-hidden rounded-xl border border-neutral-200">
+              <div className="flex items-center justify-between bg-neutral-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 <span>Outstanding invoices — paid oldest first</span>
                 <button
                   type="button"
@@ -173,22 +178,22 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
                   {selected.size === invoices.length ? 'Untick all' : 'Tick all'}
                 </button>
               </div>
-              <ul className="divide-y divide-slate-100">
-                {preview.length === 0 && invoices.length === 0 && <li className="px-3 py-4 text-center text-sm text-slate-400">This supplier has no unpaid invoices.</li>}
+              <ul className="divide-y divide-neutral-100">
+                {preview.length === 0 && invoices.length === 0 && <li className="px-3 py-4 text-center text-sm text-neutral-400">This supplier has no unpaid invoices.</li>}
                 {invoices.map((inv) => {
                   const p = preview.find((x) => x.id === inv.id);
                   return (
                     <li key={inv.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
-                      <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={selected.has(inv.id)} onChange={() => toggle(inv.id)} aria-label={`Include ${inv.purchaseNumber}`} />
+                      <input type="checkbox" className="h-4 w-4 accent-brand-400" checked={selected.has(inv.id)} onChange={() => toggle(inv.id)} aria-label={`Include ${inv.purchaseNumber}`} />
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-800">{inv.purchaseNumber}</p>
-                        <p className="text-xs text-slate-400">
+                        <p className="font-medium text-neutral-800">{inv.purchaseNumber}</p>
+                        <p className="text-xs text-neutral-400">
                           {formatDate(inv.purchaseDate || inv.createdAt)}
                           {inv.supplierInvoiceNumber ? ` · ${inv.supplierInvoiceNumber}` : ''}
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="tabular-nums text-slate-700">Owed {formatCurrency(inv.balanceDue)}</p>
+                        <p className="tabular-nums text-neutral-700">Owed {formatCurrency(inv.balanceDue)}</p>
                         {p && p.take > 0 && (
                           <p className="text-xs tabular-nums text-emerald-600">
                             pays {formatCurrency(p.take)} → <Badge color={STATUS_COLOR[p.status]}>{p.status}</Badge>
@@ -199,14 +204,14 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
                   );
                 })}
                 {voided.map((v) => (
-                  <li key={v.id} className="flex items-center gap-3 bg-slate-50/60 px-3 py-2 text-sm text-slate-400">
+                  <li key={v.id} className="flex items-center gap-3 bg-neutral-50/60 px-3 py-2 text-sm text-neutral-400">
                     <Ban className="h-4 w-4" />
                     <span className="flex-1 line-through">{v.purchaseNumber}</span>
                     <span className="text-xs">Voided — cannot be included</span>
                   </li>
                 ))}
               </ul>
-              <div className="flex justify-between border-t border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-800">
+              <div className="flex justify-between border-t border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm font-semibold text-neutral-800">
                 <span>Total owed (selected)</span>
                 <span className="tabular-nums">{formatCurrency(totalOwed)}</span>
               </div>
@@ -223,14 +228,14 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
                       pickPct(pct);
                     }}
                     className={`rounded-lg border px-3.5 py-1.5 text-sm font-semibold transition ${
-                      percentage === pct && customPct === '' ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-brand-50'
+                      percentage === pct && customPct === '' ? 'border-brand-400 bg-primary text-white' : 'border-neutral-200 text-neutral-600 hover:bg-brand-50'
                     }`}
                   >
                     {pct}%
                   </button>
                 ))}
                 <div className="flex items-center gap-1.5">
-                  <span className="text-sm text-slate-500">Custom</span>
+                  <span className="text-sm text-neutral-500">Custom</span>
                   <Input
                     type="number"
                     min="0"
@@ -263,6 +268,10 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
                   }}
                 />
               </FormField>
+              <FormField label="Discount from the supplier">
+                <Input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} placeholder="0.00" />
+                <p className="mt-1 text-xs text-neutral-500">What they took off. Clears the debt with the payment; no money leaves the account. Shows as Discount Received on the Profit &amp; Loss.</p>
+              </FormField>
               <FormField label="Payment account" required>
                 <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                   <option value="">Select account</option>
@@ -287,11 +296,16 @@ export default function BulkPaymentModal({ open, onClose, onPaid, initialSupplie
             {amountNum > 0 && !problem && (
               <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-900">
                 {percentage != null ? `${percentage}% × ${formatCurrency(totalOwed)} = ` : ''}
-                <strong>{formatCurrency(amountNum)}</strong> leaves the account as one payment, covering{' '}
-                {preview.filter((p) => p.take > 0).length} invoice(s).
+                <strong>{formatCurrency(amountNum)}</strong> leaves the account as one payment
+                {discountNum > 0 && (
+                  <>
+                    {' '}+ <strong>{formatCurrency(discountNum)}</strong> discount (no money)
+                  </>
+                )}
+                , covering {preview.filter((p) => p.take > 0).length} invoice(s).
               </div>
             )}
-            {problem && <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{problem}</div>}
+            {problem && <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800">{problem}</div>}
           </>
         )}
       </div>

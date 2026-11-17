@@ -4,7 +4,7 @@ import InventoryItem from '../models/InventoryItem.js';
 import Account from '../models/Account.js';
 import { nextSequence } from '../models/Counter.js';
 import { ApiError } from '../utils/ApiError.js';
-import { toCents } from '../utils/money.js';
+import { toCents, fromCents } from '../utils/money.js';
 import { reserveStock } from './stockService.js';
 import { createPendingTransaction } from './accountService.js';
 import { getBusinessDayStatus } from './dayCloseService.js';
@@ -53,7 +53,8 @@ export function resolveLinePricing(line, item, quotedUnitPriceCents) {
   const unitPriceCents = quotedUnitPriceCents != null ? quotedUnitPriceCents : line.unitPrice != null ? toCents(line.unitPrice) : item.sellingPriceCents;
   if (!Number.isSafeInteger(unitPriceCents) || unitPriceCents < 0) throw new ApiError(400, `Invalid rate for "${item.name}".`);
   const costPriceCents = line.costPrice != null ? toCents(line.costPrice) : item.costPriceCents;
-  if (!Number.isSafeInteger(costPriceCents) || costPriceCents < 0) throw new ApiError(400, `Invalid cost price for "${item.name}".`);
+  // The average cost is kept exact (it may have a fraction of a cent).
+  if (!Number.isFinite(costPriceCents) || costPriceCents < 0) throw new ApiError(400, `Invalid cost price for "${item.name}".`);
   const grossCents = unitPriceCents * qty;
   const discountCents = line.discount != null ? toCents(line.discount) : 0;
   if (!Number.isSafeInteger(discountCents) || discountCents < 0) throw new ApiError(400, `Invalid discount for "${item.name}".`);
@@ -61,6 +62,47 @@ export function resolveLinePricing(line, item, quotedUnitPriceCents) {
   return { unitPriceCents, costPriceCents, discountCents, subtotalCents: grossCents };
 }
 
+
+// The price changes on an invoice: lines sold below the product's list price
+// or with a line discount, and the invoice discount. Kept in the audit log
+// ('sale.price_override') so an admin can see who changed prices and by how
+// much. Returns null when the invoice is at list prices. Read-only.
+export async function priceChangesOf(sale) {
+  const items = await InventoryItem.find({ _id: { $in: sale.items.map((l) => l.item) } }).select('sellingPriceCents').lean();
+  const listPrice = new Map(items.map((i) => [String(i._id), i.sellingPriceCents]));
+  const lines = sale.items
+    .filter((l) => l.discountCents > 0 || (listPrice.has(String(l.item)) && l.unitPriceCents < listPrice.get(String(l.item))))
+    .map((l) => ({
+      item: l.itemName,
+      quantity: l.quantity,
+      listPrice: listPrice.has(String(l.item)) ? fromCents(listPrice.get(String(l.item))) : null,
+      soldAt: fromCents(l.unitPriceCents),
+      lineDiscount: fromCents(l.discountCents),
+    }));
+  const lineDiscountCents = sale.items.reduce((t, l) => t + (l.discountCents || 0), 0);
+  const invoiceDiscountCents = Math.max(0, (sale.discountCents || 0) - lineDiscountCents);
+  if (!lines.length && !invoiceDiscountCents) return null;
+  return { receiptNumber: sale.receiptNumber, lines, invoiceDiscount: fromCents(invoiceDiscountCents), total: fromCents(sale.totalCents) };
+}
+
+// Merchant VAT: paying through a MERCHANT account that has a VAT %, the
+// customer pays the normal amount and the merchant company keeps its VAT out
+// of it ($100 paid, 3% -> the account gets $97). The VAT is not our money:
+// it is a Merchant VAT expense on the sale, so profit is $3 less.
+export const isMerchantAccount = (account) => !!account && (account.type === 'MERCHANT' || /merchant/i.test(account.name || ''));
+// vatPercent from the POS (typed in the VAT box) wins over the account's own.
+export function merchantVat(account, paidAmountCents, vatPercent) {
+  if (!isMerchantAccount(account)) return { vatPercent: 0, vatCents: 0, vatDeducted: false };
+  const given = vatPercent === undefined || vatPercent === null || vatPercent === '' ? NaN : Number(vatPercent);
+  const pct = Number.isFinite(given) ? Math.min(100, Math.max(0, given)) : Number(account.vatPercent) || 0;
+  if (pct <= 0 || paidAmountCents <= 0) return { vatPercent: 0, vatCents: 0, vatDeducted: false };
+  return { vatPercent: pct, vatCents: Math.round((paidAmountCents * pct) / 100), vatDeducted: true };
+}
+
+// What reaches the account: the paid amount less the VAT the merchant kept.
+export function netOfMerchantVat(sale, paidAmountCents) {
+  return paidAmountCents - (sale.vatDeducted ? sale.vatCents || 0 : 0);
+}
 
 export function normalizeSaleNotes(value) {
   const notes = String(value ?? '').trim();
@@ -80,10 +122,29 @@ export async function assertBusinessDayOpen() {
 }
 
 // Authoritative draft creation, shared by POS and quotation conversion.
+// A customer with a credit limit may owe at most that much: what they owe
+// now, plus credit on their other pending (Draft) invoices, plus this sale's
+// credit. Paying in full is always fine. `excludeSaleId` is the invoice
+// being edited, so its old credit is not counted twice.
+export async function assertWithinCreditLimit(customer, newCreditCents, session, excludeSaleId = null) {
+  if (customer?.creditLimitCents == null || newCreditCents <= 0) return;
+  const filter = { customer: customer._id, status: 'DRAFT' };
+  if (excludeSaleId) filter._id = { $ne: excludeSaleId };
+  const drafts = await Sale.find(filter).select('balanceAddedCents').session(session).lean();
+  const owedCents = Math.max(0, customer.balanceCents) + drafts.reduce((t, d) => t + (d.balanceAddedCents || 0), 0);
+  if (owedCents + newCreditCents <= customer.creditLimitCents) return;
+  const room = Math.max(0, customer.creditLimitCents - owedCents);
+  const money = (c) => (c / 100).toFixed(2);
+  throw new ApiError(
+    400,
+    `${customer.name}'s credit limit is ${money(customer.creditLimitCents)}. They already owe ${money(owedCents)}, so only ${money(room)} more can go on credit -- this sale would add ${money(newCreditCents)}. Take at least ${money(newCreditCents - room)} more in payment.`
+  );
+}
+
 export async function createSaleDraft(payload, user, session, { quotedPrices, quotationId } = {}) {
   await assertBusinessDayOpen();
 
-  const { customerId, items, discount = 0, paidAmount = 0, walletAmount = 0, paymentAccountId } = payload;
+  const { customerId, items, discount = 0, paidAmount = 0, walletAmount = 0, paymentAccountId, vatPercent } = payload;
   const notes = normalizeSaleNotes(payload.notes);
   if (!customerId) throw new ApiError(400, 'Please select or create a customer before completing the sale.');
   validateSaleItems({ items, discount, paidAmount });
@@ -93,7 +154,7 @@ export async function createSaleDraft(payload, user, session, { quotedPrices, qu
 
 
     const customer = await Customer.findById(customerId).session(session);
-    if (!customer) throw new ApiError(404, 'Customer not found. Please select a valid customer.');
+    if (!customer || customer.archivedAt) throw new ApiError(404, 'Customer not found. Please select an active customer.');
 
     let account = null;
     if (paymentAccountId) {
@@ -149,6 +210,8 @@ export async function createSaleDraft(payload, user, session, { quotedPrices, qu
       throw new ApiError(400, `Wallet balance (${(customer.walletBalanceCents / 100).toFixed(2)}) is less than the requested wallet payment.`);
     }
 
+    await assertWithinCreditLimit(customer, totalCents - paidAmountCents - walletAmountCents, session);
+
     const receiptNumber = await generateReceiptNumber(session);
 
     const [sale] = await Sale.create(
@@ -166,6 +229,7 @@ export async function createSaleDraft(payload, user, session, { quotedPrices, qu
           paidAmountCents,
           walletAmountCents,
           paymentAccount: account?._id || null,
+          ...merchantVat(account, paidAmountCents, vatPercent),
           balanceAddedCents: totalCents - paidAmountCents - walletAmountCents,
           outstandingCents: 0, // not posted until CONFIRMED
           costOfGoodsCents: 0,
@@ -188,10 +252,10 @@ export async function createSaleDraft(payload, user, session, { quotedPrices, qu
           account,
           direction: 'IN',
           type: 'SALE_PAYMENT',
-          amountCents: paidAmountCents,
+          amountCents: netOfMerchantVat(sale, paidAmountCents),
           referenceType: 'Sale',
           referenceId: sale._id,
-          description: `Draft sale ${receiptNumber} (pending Close Day)`,
+          description: `Draft sale ${receiptNumber}${sale.vatCents ? ` (merchant kept VAT ${sale.vatPercent}%: ${(sale.vatCents / 100).toFixed(2)})` : ''} (pending Close Day)`,
           createdBy: user,
         },
         session

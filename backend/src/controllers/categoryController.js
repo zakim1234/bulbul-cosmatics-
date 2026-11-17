@@ -2,6 +2,7 @@ import Category from '../models/Category.js';
 import InventoryItem from '../models/InventoryItem.js';
 import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { escapeRegex } from '../utils/regex.js';
 
 function toDTO(c, itemCount) {
   return {
@@ -15,10 +16,10 @@ function toDTO(c, itemCount) {
 
 // GET /api/categories?search=&withCounts=1
 export const listCategories = asyncHandler(async (req, res) => {
-  const { search } = req.query;
+  const search = String(req.query.search ?? '').trim();
   const filter = {};
-  if (search && search.trim()) {
-    filter.name = { $regex: search.trim(), $options: 'i' };
+  if (search) {
+    filter.name = { $regex: escapeRegex(search), $options: 'i' };
   }
 
   const categories = await Category.find(filter).sort({ name: 1 });
@@ -43,9 +44,9 @@ export const getCategory = asyncHandler(async (req, res) => {
 
 export const createCategory = asyncHandler(async (req, res) => {
   const { name } = req.body;
-  if (!name || !name.trim()) throw new ApiError(400, 'Category name is required.');
+  if (typeof name !== 'string' || !name.trim()) throw new ApiError(400, 'Category name is required.');
 
-  const existing = await Category.findOne({ name: { $regex: `^${name.trim()}$`, $options: 'i' } });
+  const existing = await Category.findOne({ name: { $regex: `^${escapeRegex(name.trim())}$`, $options: 'i' } });
   if (existing) throw new ApiError(409, 'A category with this name already exists.');
 
   const category = await Category.create({ name: name.trim() });
@@ -57,11 +58,11 @@ export const updateCategory = asyncHandler(async (req, res) => {
   if (!category) throw new ApiError(404, 'Category not found.');
 
   const { name } = req.body;
-  if (!name || !name.trim()) throw new ApiError(400, 'Category name is required.');
+  if (typeof name !== 'string' || !name.trim()) throw new ApiError(400, 'Category name is required.');
 
   const existing = await Category.findOne({
     _id: { $ne: category._id },
-    name: { $regex: `^${name.trim()}$`, $options: 'i' },
+    name: { $regex: `^${escapeRegex(name.trim())}$`, $options: 'i' },
   });
   if (existing) throw new ApiError(409, 'A category with this name already exists.');
 

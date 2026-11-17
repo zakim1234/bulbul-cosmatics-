@@ -117,7 +117,7 @@ export const confirmClose = asyncHandler(async (req, res) => {
 export const openDayHandler = asyncHandler(async (req, res) => {
   const bd = await openDay({ user: req.user });
 
-  await logAudit({ user: req.user, action: 'dayclose.open', entityType: 'BusinessDay', entityId: 'current', details: {} });
+  await logAudit({ user: req.user, action: 'dayclose.open', entityType: 'BusinessDay', details: { businessDay: bd?._id ?? null } });
 
   res.json({ success: true, data: businessDayDTO(bd) });
 });

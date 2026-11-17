@@ -1,9 +1,12 @@
-import { createSaleDraft, normalizeSaleNotes, validateSaleItems, resolveLinePricing, debitWallet, restoreWallet, assertBusinessDayOpen } from '../services/saleService.js';
+import { createSaleDraft, assertWithinCreditLimit, normalizeSaleNotes, validateSaleItems, resolveLinePricing, debitWallet, restoreWallet, assertBusinessDayOpen, priceChangesOf, merchantVat, netOfMerchantVat } from '../services/saleService.js';
+import { whoLabel } from '../utils/whoLabel.js';
 import Sale from '../models/Sale.js';
+import { userHas } from '../models/User.js';
 import Customer from '../models/Customer.js';
 import InventoryItem from '../models/InventoryItem.js';
 import InventoryLot from '../models/InventoryLot.js';
 import Account from '../models/Account.js';
+import AccountTransaction from '../models/AccountTransaction.js';
 import Payment from '../models/Payment.js';
 import CustomerLedger from '../models/CustomerLedger.js';
 import CustomerWalletTransaction from '../models/CustomerWalletTransaction.js';
@@ -15,13 +18,28 @@ import { resolveDateRange } from '../utils/dateRange.js';
 import { logAudit } from '../services/auditService.js';
 import { applyWalletToDebt } from '../services/walletService.js';
 import { restoreLotConsumption } from '../services/lotService.js';
+import { bookStockValueGap } from '../services/stockRevaluationService.js';
 import { reserveStock, releaseReservation } from '../services/stockService.js';
 import { calculateWeightedAverageCost } from '../services/costingService.js';
 import { createPendingTransaction, reverseTransaction, postImmediateTransaction } from '../services/accountService.js';
+import { confirmSale } from '../services/dayCloseService.js';
+
+// The Super Admin edited it: only they, or someone given the permission, may change it again.
+function assertNotLocked(sale, user) {
+  if (user?.isSuperAdmin || userHas(user, 'changeLockedInvoices')) return;
+  if (sale.lockedBySuperAdmin || (sale.lockedByAdmin && user?.role !== 'admin')) {
+    throw new ApiError(403, `${sale.editedByName || 'An admin'} corrected ${sale.receiptNumber}. You can see the change, but you cannot change it unless you are given permission.`);
+  }
+}
 
 function toDTO(sale) {
   return {
     id: sale._id,
+    editedAt: sale.editedAt || null,
+    editedByName: sale.editedByName || '',
+    lockedBySuperAdmin: !!sale.lockedBySuperAdmin,
+    lockedByAdmin: !!sale.lockedByAdmin,
+    awaitingDayClose: !!sale.awaitingDayClose,
     receiptNumber: sale.receiptNumber,
     // `customer`/`paymentAccount` are populated (objects) by getSale/getReceipt
     // but plain ObjectIds everywhere else -- always normalize to a bare id
@@ -47,6 +65,8 @@ function toDTO(sale) {
     discount: fromCents(sale.discountCents),
     total: fromCents(sale.totalCents),
     paidAmount: fromCents(sale.paidAmountCents),
+    vatPercent: sale.vatPercent || 0,
+    vat: fromCents(sale.vatCents || 0),
     walletAmount: fromCents(sale.walletAmountCents),
     paymentAccount: sale.paymentAccount?._id || sale.paymentAccount,
     notes: sale.notes || '',
@@ -59,6 +79,15 @@ function toDTO(sale) {
     confirmedAt: sale.confirmedAt,
     cancelledAt: sale.cancelledAt,
     cancelledReason: sale.cancelledReason,
+    cancelRefund: sale.cancelRefund?.to
+      ? {
+          to: sale.cancelRefund.to,
+          amount: fromCents(sale.cancelRefund.amountCents),
+          accountName: sale.cancelRefund.accountName,
+          reference: sale.cancelRefund.reference,
+          byName: sale.cancelRefund.byName,
+        }
+      : null,
     createdAt: sale.createdAt,
     updatedAt: sale.updatedAt,
     quotation: sale.quotation || null,
@@ -70,6 +99,9 @@ function toDTO(sale) {
       debtReduced: fromCents(r.debtReducedCents),
       refund: fromCents(r.refundCents),
       walletRefund: fromCents(r.walletRefundCents || 0),
+      refundTo: r.refundTo || (r.refundCents > 0 ? 'ACCOUNT' : ''),
+      refundAccountName: r.refundAccountName || '',
+      refundReference: r.refundReference || '',
       reason: r.reason,
       invoiceBalanceAfter: r.invoiceBalanceAfterCents != null ? fromCents(r.invoiceBalanceAfterCents) : null,
       customerBalanceAfter: r.customerBalanceAfterCents != null ? fromCents(r.customerBalanceAfterCents) : null,
@@ -84,24 +116,102 @@ function toDTO(sale) {
 // COGS, or profit -- those are only posted for real when Close Day confirms
 // this invoice.
 export const createSale = asyncHandler(async (req, res) => {
-  const result = await runInTransaction(session => createSaleDraft(req.body, req.user, session));
+  // A sales invoice is final at once -- it does not wait as Pending for
+  // Close Day: stock, the customer's debt and the account are posted now.
+  // Close Day still counts it in that day's totals (awaitingDayClose).
+  const result = await runInTransaction(async (session) => {
+    const sale = await createSaleDraft(req.body, req.user, session);
+    await confirmSale(sale, session, req.user);
+    sale.awaitingDayClose = true;
+    await sale.save({ session });
+    return sale;
+  });
 
   await logAudit({
     user: req.user,
-    action: 'sale.create_draft',
+    action: 'sale.create',
     entityType: 'Sale',
     entityId: result._id,
     details: { receiptNumber: result.receiptNumber, total: fromCents(result.totalCents) },
   });
+  await logPriceChanges(req.user, result);
 
   res.status(201).json({ success: true, data: toDTO(result) });
 });
 
+// Records an invoice's price changes and discounts in the audit log. Only a
+// record: it never stops or changes the sale, and a failure here never
+// fails the request (the sale is already saved).
+async function logPriceChanges(user, sale) {
+  try {
+    const changes = await priceChangesOf(sale);
+    if (changes) await logAudit({ user, action: 'sale.price_override', entityType: 'Sale', entityId: sale._id, details: changes });
+  } catch (err) {
+    console.error('[audit] could not record price changes:', err.message);
+  }
+}
+
 // PUT /api/sales/:id -- same-day edit of a DRAFT invoice: items, quantities,
 // discount, paid amount and payment account can all change. Reservations
 // and the pending account receipt are recomputed from scratch each time.
+// Editing an invoice after Close Day: the old version is undone first --
+// its stock goes back (at its own historical cost), the customer's debt and
+// payment come off, the money paid at the sale leaves the account again (its
+// own entry, so the history stays) -- then the new version is saved and
+// confirmed straight away, same invoice number and date. Not when items were
+// returned or debt payments were made on it later (those are undone first).
+async function undoConfirmedSale(sale, session, user) {
+  if (sale.items.some((l) => (l.returnedQuantity || 0) > 0)) throw new ApiError(409, 'Items were returned on this invoice, so it cannot be edited. Cancel the return first.');
+  const paidLaterCents = Math.max(0, sale.balanceAddedCents - sale.outstandingCents);
+  if (paidLaterCents > 0) throw new ApiError(409, `${fromCents(paidLaterCents).toFixed(2)} of this invoice was paid later as debt. Cancel that payment first, then edit the invoice.`);
+  const label = `Invoice ${sale.receiptNumber} edited`;
+
+  for (const line of sale.items) {
+    const itemDoc = await InventoryItem.findById(line.item).session(session);
+    if (itemDoc) {
+      const oldQuantity = itemDoc.quantity;
+      const oldAverageCostCents = itemDoc.costPriceCents;
+      const newAverageCostCents = calculateWeightedAverageCost({ oldQuantity, oldAverageCostCents, incomingQuantity: line.quantity, incomingUnitCostCents: line.costPriceCents });
+      itemDoc.stockEvents.push({ type: 'SALE_REVERSAL', reference: sale.receiptNumber, quantityBefore: oldQuantity, quantityAfter: oldQuantity + line.quantity, averageCostBeforeCents: oldAverageCostCents, averageCostAfterCents: newAverageCostCents });
+      await bookStockValueGap(session, itemDoc, { oldQuantity, oldCostCents: oldAverageCostCents, newQuantity: oldQuantity + line.quantity, newCostCents: newAverageCostCents, incomingQuantity: line.quantity, incomingUnitCostCents: line.costPriceCents }, { reason: `${sale.receiptNumber} edited: units sold ahead of stock`, user });
+      itemDoc.quantity = oldQuantity + line.quantity;
+      itemDoc.costPriceCents = newAverageCostCents;
+      await itemDoc.save({ session });
+      await restoreLotConsumption(line.lotConsumption, session);
+    }
+    line.lotConsumption = [];
+    line.batchReservations = [];
+  }
+
+  const customer = sale.customer ? await Customer.findById(sale.customer).session(session) : null;
+  if (customer) {
+    const before = customer.balanceCents;
+    customer.balanceCents -= sale.outstandingCents;
+    customer.totalPurchasedCents -= sale.totalCents;
+    customer.totalPaidCents = Math.max(0, customer.totalPaidCents - sale.paidAmountCents);
+    await customer.save({ session });
+    if (sale.outstandingCents > 0) {
+      await CustomerLedger.create([{ customer: customer._id, type: 'ADJUSTMENT', amountCents: -sale.outstandingCents, sale: sale._id, description: `${label} -- old version taken off`, balanceBeforeCents: before, balanceAfterCents: customer.balanceCents, createdBy: user?._id }], { session });
+    }
+    if (sale.walletAmountCents > 0) await restoreWallet(customer, sale.walletAmountCents, sale, session, user);
+  }
+  sale.walletAmountCents = 0;
+
+  // The money paid at the sale leaves the account it came into.
+  const txn = sale.accountTransaction ? await AccountTransaction.findById(sale.accountTransaction).session(session) : null;
+  if (txn?.status === 'POSTED') {
+    const account = await Account.findById(txn.account).session(session);
+    if (account) await postImmediateTransaction({ account, direction: 'OUT', type: 'REFUND', amountCents: txn.amountCents, referenceType: 'Sale', referenceId: sale._id, description: `${label} -- old payment taken back`, createdBy: user }, session);
+  } else if (txn?.status === 'PENDING') {
+    await reverseTransaction(txn._id, session);
+  }
+  sale.accountTransaction = null;
+  await Payment.updateMany({ type: 'sale', relatedSale: sale._id, status: { $ne: 'CANCELLED' } }, { $set: { status: 'CANCELLED', cancelledAt: new Date(), cancelReason: `${label} -- replaced` } }, { session });
+  sale.status = 'DRAFT';
+}
+
 export const updateSale = asyncHandler(async (req, res) => {
-  const { items, discount = 0, paidAmount = 0, walletAmount = 0, paymentAccountId } = req.body;
+  const { items, discount = 0, paidAmount = 0, walletAmount = 0, paymentAccountId, vatPercent } = req.body;
   const notes = req.body.notes === undefined ? undefined : normalizeSaleNotes(req.body.notes);
   validateSaleItems({ items, discount, paidAmount });
   if (!Number.isFinite(Number(walletAmount)) || !Number.isSafeInteger(toCents(walletAmount)) || Number(walletAmount) < 0) {
@@ -112,10 +222,14 @@ export const updateSale = asyncHandler(async (req, res) => {
   const result = await runInTransaction(async (session) => {
     const sale = await Sale.findById(req.params.id).session(session);
     if (!sale) throw new ApiError(404, 'Sale not found.');
-    if (sale.quotation) throw new ApiError(409, 'Quotation invoices retain their accepted prices and items. Cancel the draft if it is no longer required.');
-    if (sale.status !== 'DRAFT') {
-      throw new ApiError(409, 'Only pending (Draft) invoices can be edited. This invoice has already been closed.');
-    }
+    if (sale.status === 'CANCELLED') throw new ApiError(409, 'This invoice is cancelled and cannot be edited.');
+    assertNotLocked(sale, req.user);
+    // A confirmed invoice: undo the confirmed version, then save the new one.
+    // Only one from a day already closed needs "Edit invoices after Close Day";
+    // today's (still to be counted by Close Day) needs just Edit invoices.
+    const wasConfirmed = sale.status === 'CONFIRMED';
+    if (wasConfirmed && !sale.awaitingDayClose && !userHas(req.user, 'editClosedInvoices')) throw new ApiError(403, 'Editing an invoice after Close Day needs the "Edit invoices after Close Day" permission.');
+
 
     let account = null;
     if (paymentAccountId) {
@@ -129,14 +243,18 @@ export const updateSale = asyncHandler(async (req, res) => {
       throw new ApiError(400, 'Please select a payment account for the amount being paid.');
     }
 
-    // Release every existing reservation for this draft before re-reserving
-    // against the new line items, so a removed/reduced line frees stock.
-    for (const line of sale.items) {
-      await releaseReservation(line.item, line.quantity, session, line.batchReservations);
-    }
-    if (sale.accountTransaction) {
-      await reverseTransaction(sale.accountTransaction, session);
-      sale.accountTransaction = null;
+    if (wasConfirmed) {
+      await undoConfirmedSale(sale, session, req.user);
+    } else {
+      // Release every existing reservation for this draft before re-reserving
+      // against the new line items, so a removed/reduced line frees stock.
+      for (const line of sale.items) {
+        await releaseReservation(line.item, line.quantity, session, line.batchReservations);
+      }
+      if (sale.accountTransaction) {
+        await reverseTransaction(sale.accountTransaction, session);
+        sale.accountTransaction = null;
+      }
     }
 
     // Restore any previously-applied wallet credit before re-validating and
@@ -183,6 +301,7 @@ export const updateSale = asyncHandler(async (req, res) => {
     if (customer && walletAmountCents > customer.walletBalanceCents) {
       throw new ApiError(400, `Wallet balance (${(customer.walletBalanceCents / 100).toFixed(2)}) is less than the requested wallet payment.`);
     }
+    if (customer) await assertWithinCreditLimit(customer, totalCents - paidAmountCents - walletAmountCents, session, sale._id);
 
     sale.items = saleItems;
     if (notes !== undefined) sale.notes = notes;
@@ -192,6 +311,7 @@ export const updateSale = asyncHandler(async (req, res) => {
     sale.paidAmountCents = paidAmountCents;
     sale.walletAmountCents = walletAmountCents;
     sale.paymentAccount = account?._id || null;
+    Object.assign(sale, merchantVat(account, paidAmountCents, vatPercent));
     sale.balanceAddedCents = totalCents - paidAmountCents - walletAmountCents;
 
     if (customer && walletAmountCents > 0) {
@@ -204,28 +324,41 @@ export const updateSale = asyncHandler(async (req, res) => {
           account,
           direction: 'IN',
           type: 'SALE_PAYMENT',
-          amountCents: paidAmountCents,
+          amountCents: netOfMerchantVat(sale, paidAmountCents),
           referenceType: 'Sale',
           referenceId: sale._id,
-          description: `Draft sale ${sale.receiptNumber} (edited, pending Close Day)`,
+          description: `${wasConfirmed ? 'Sale' : 'Draft sale'} ${sale.receiptNumber}${sale.vatCents ? ` (merchant kept VAT ${sale.vatPercent}%: ${(sale.vatCents / 100).toFixed(2)})` : ''} (edited${wasConfirmed ? '' : ', pending Close Day'})`,
           createdBy: req.user,
         },
         session
       );
       sale.accountTransaction = txn?._id || null;
+      // Edited by someone else (e.g. the Super Admin): the cashier who made
+      // it sees, in their account, that it was changed and by whom.
+      if (txn && sale.createdBy && String(sale.createdBy) !== String(req.user?._id)) {
+        await AccountTransaction.updateOne({ _id: txn._id }, { $set: { correctionNote: `Invoice ${sale.receiptNumber} edited`, correctedByName: whoLabel(req.user) } }, { session });
+      }
     }
 
+    // Who edited it; the Super Admin's edit locks it for everyone else.
+    sale.editedAt = new Date();
+    sale.editedByName = whoLabel(req.user);
+    if (req.user?.isSuperAdmin) sale.lockedBySuperAdmin = true;
+    else if (req.user?.role === 'admin' && String(sale.createdBy || '') !== String(req.user._id)) sale.lockedByAdmin = true;
     await sale.save({ session });
+    // Edited after Close Day: final again at once (stock, customer, account).
+    if (wasConfirmed) await confirmSale(sale, session, req.user);
     return sale;
   });
 
   await logAudit({
     user: req.user,
-    action: 'sale.edit_draft',
+    action: result.confirmedAt && result.status === 'CONFIRMED' ? 'sale.edit_confirmed' : 'sale.edit_draft',
     entityType: 'Sale',
     entityId: result._id,
     details: { receiptNumber: result.receiptNumber },
   });
+  await logPriceChanges(req.user, result);
 
   res.json({ success: true, data: toDTO(result) });
 });
@@ -239,6 +372,7 @@ export const cancelSale = asyncHandler(async (req, res) => {
   const result = await runInTransaction(async (session) => {
     const sale = await Sale.findById(req.params.id).session(session);
     if (!sale) throw new ApiError(404, 'Sale not found.');
+    assertNotLocked(sale, req.user);
     if (sale.status !== 'DRAFT') {
       throw new ApiError(409, 'Only pending (Draft) invoices can be cancelled directly. Use a return/reversal for a confirmed sale.');
     }
@@ -276,6 +410,41 @@ export const cancelSale = asyncHandler(async (req, res) => {
   res.json({ success: true, data: toDTO(result) });
 });
 
+// GET /api/sales/refunds?from&to&refundTo -- every cancelled invoice whose
+// money was given back: to the customer's wallet or as cash out of an account
+// (with the number it was sent to), newest first, with totals.
+export const listRefunds = asyncHandler(async (req, res) => {
+  const filter = { status: 'CANCELLED', 'cancelRefund.amountCents': { $gt: 0 } };
+  if (req.query.from || req.query.to) {
+    filter.cancelledAt = {};
+    if (req.query.from) filter.cancelledAt.$gte = new Date(String(req.query.from).slice(0, 10) + 'T00:00:00');
+    if (req.query.to) filter.cancelledAt.$lte = new Date(String(req.query.to).slice(0, 10) + 'T23:59:59.999');
+  }
+  if (['WALLET', 'ACCOUNT'].includes(req.query.refundTo)) filter['cancelRefund.to'] = req.query.refundTo;
+  const sales = await Sale.find(filter).sort({ cancelledAt: -1 }).limit(1000).lean();
+  const rows = sales.map((s) => ({
+    id: s._id,
+    branch: s.branch || null,
+    receiptNumber: s.receiptNumber,
+    customer: s.customer || null,
+    customerName: s.customerName || 'Walk-in',
+    invoiceDate: s.createdAt,
+    cancelledAt: s.cancelledAt,
+    reason: s.cancelledReason || '',
+    total: fromCents(s.totalCents),
+    amount: fromCents(s.cancelRefund.amountCents),
+    to: s.cancelRefund.to,
+    accountName: s.cancelRefund.accountName || '',
+    reference: s.cancelRefund.reference || '',
+    byName: s.cancelRefund.byName || '',
+  }));
+  const sum = (to) => fromCents(sales.filter((s) => !to || s.cancelRefund.to === to).reduce((t, s) => t + s.cancelRefund.amountCents, 0));
+  res.json({
+    success: true,
+    data: { rows, totals: { count: rows.length, amount: sum(), wallet: sum('WALLET'), cash: sum('ACCOUNT') } },
+  });
+});
+
 // GET /api/sales/drafts/today -- convenient Seller access to today's pending invoices
 export const listTodayDrafts = asyncHandler(async (req, res) => {
   const { start, end } = resolveDateRange({ range: 'today' });
@@ -291,7 +460,8 @@ export const listSales = asyncHandler(async (req, res) => {
   const literal = value => String(value).slice(0, 150).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (req.query.id) filter.receiptNumber = new RegExp(literal(req.query.id), 'i');
   const nameFilters = [req.query.title, req.query.customerName].filter(Boolean);
-  if (nameFilters.length) filter.$and = nameFilters.map(value => ({ customerName: new RegExp(literal(value), 'i') }));
+  // Customer names match from the start ("C" finds Cali, not Abdi Cali).
+  if (nameFilters.length) filter.$and = nameFilters.map(value => ({ customerName: new RegExp(`^\\s*${literal(value)}`, 'i') }));
   if (range || from || to) {
     const { start, end } = resolveDateRange({ range, from, to });
     filter.createdAt = { $gte: start, $lte: end };
@@ -342,19 +512,29 @@ export const getReceipt = asyncHandler(async (req, res) => {
 // payment had already been posted for this sale.
 export const reverseSale = asyncHandler(async (req, res) => {
   const { reason = '' } = req.body;
+  const reference = String(req.body.reference || '').trim().slice(0, 100); // number the money was sent back to
 
   const result = await runInTransaction(async (session) => {
     const sale = await Sale.findById(req.params.id).session(session);
     if (!sale) throw new ApiError(404, 'Sale not found.');
+    assertNotLocked(sale, req.user);
     if (sale.status === 'DRAFT') throw new ApiError(409, 'This is still a Draft invoice -- cancel it instead of reversing it.');
     if (sale.status === 'CANCELLED') throw new ApiError(409, 'This sale has already been cancelled/reversed.');
     // Money already received for this invoice: at the sale (paidAmount) and
     // by debt payments made on it later (the part of its credit no longer
-    // outstanding). For a customer it goes to their wallet unless
-    // refundTo: 'ACCOUNT' asks for the cash paid at the sale to be handed
-    // back; a walk-in sale (no customer) can only be refunded.
+    // outstanding). All of it goes to one place: the customer's wallet, or
+    // (refundTo: 'ACCOUNT') cash handed back out of the chosen account --
+    // accountId, defaulting to the one the sale was paid into -- with the
+    // number it was sent to. A walk-in sale (no customer) can only be refunded.
     const paidLaterCents = Math.max(0, sale.balanceAddedCents - sale.outstandingCents);
+    const paidBackCents = sale.paidAmountCents + paidLaterCents;
     const refundTo = !sale.customer ? 'ACCOUNT' : req.body.refundTo === 'ACCOUNT' ? 'ACCOUNT' : 'WALLET';
+    let refundAccount = null;
+    if (refundTo === 'ACCOUNT' && paidBackCents > 0) {
+      const accountId = req.body.accountId || sale.paymentAccount;
+      refundAccount = accountId ? await Account.findById(accountId).session(session) : null;
+      if (!refundAccount || !refundAccount.isActive) throw new ApiError(400, 'Choose the account the money is given back from.');
+    }
 
     // Only the portion not already restored by a prior partial return (see
     // returnSale) is restored here -- lotConsumption entries are decremented
@@ -383,6 +563,7 @@ export const reverseSale = asyncHandler(async (req, res) => {
         averageCostBeforeCents: oldAverageCostCents,
         averageCostAfterCents: newAverageCostCents,
       });
+      await bookStockValueGap(session, itemDoc, { oldQuantity, oldCostCents: oldAverageCostCents, newQuantity: oldQuantity + stillConsumed, newCostCents: newAverageCostCents, incomingQuantity: stillConsumed, incomingUnitCostCents: line.costPriceCents }, { reason: `${sale.receiptNumber} cancelled: units sold ahead of stock`, user: req.user });
       itemDoc.quantity = oldQuantity + stillConsumed;
       itemDoc.costPriceCents = newAverageCostCents;
       await itemDoc.save({ session });
@@ -418,9 +599,7 @@ export const reverseSale = asyncHandler(async (req, res) => {
       }
     }
 
-    // Money paid on it later always goes to the customer's wallet; cash paid
-    // at the sale goes there too unless it is handed back.
-    const toWalletCents = customer ? paidLaterCents + (refundTo === 'WALLET' ? sale.paidAmountCents : 0) : 0;
+    const toWalletCents = customer && refundTo === 'WALLET' ? paidBackCents : 0;
     if (toWalletCents > 0) {
       const walletBefore = customer.walletBalanceCents;
       customer.walletBalanceCents += toWalletCents;
@@ -442,25 +621,33 @@ export const reverseSale = asyncHandler(async (req, res) => {
       );
     }
 
-    // The original payment was already POSTED at Close Day -- refund it out
-    // of the same account rather than silently deleting that history.
-    if (refundTo === 'ACCOUNT' && sale.paymentAccount && sale.paidAmountCents > 0) {
-      const account = await Account.findById(sale.paymentAccount).session(session);
-      if (account) {
-        await postImmediateTransaction(
-          {
-            account,
-            direction: 'OUT',
-            type: 'REFUND',
-            amountCents: sale.paidAmountCents,
-            referenceType: 'Sale',
-            referenceId: sale._id,
-            description: `Refund for reversed sale ${sale.receiptNumber}${reason ? ` (${reason})` : ''}`,
-            createdBy: req.user,
-          },
-          session
-        );
-      }
+    // The payments were already POSTED -- the refund leaves the chosen
+    // account as its own transaction rather than deleting that history.
+    if (refundAccount) {
+      await postImmediateTransaction(
+        {
+          account: refundAccount,
+          direction: 'OUT',
+          type: 'REFUND',
+          amountCents: paidBackCents,
+          referenceType: 'Sale',
+          referenceId: sale._id,
+          description: `Refund for cancelled invoice ${sale.receiptNumber}${sale.customerName ? ` — ${sale.customerName}` : ''}${reference ? ` (sent to ${reference})` : ''}${reason ? ` (${reason})` : ''}`,
+          createdBy: req.user,
+        },
+        session
+      );
+    }
+    if (paidBackCents > 0) {
+      sale.cancelRefund = {
+        to: refundTo,
+        amountCents: paidBackCents,
+        account: refundAccount?._id || null,
+        accountName: refundAccount?.name || '',
+        reference: refundTo === 'ACCOUNT' ? reference : '',
+        by: req.user?._id || null,
+        byName: req.user?.name || '',
+      };
     }
 
     // The sale is being fully undone -- give back whatever wallet credit it
@@ -488,7 +675,7 @@ export const reverseSale = asyncHandler(async (req, res) => {
     action: 'sale.reverse',
     entityType: 'Sale',
     entityId: result._id,
-    details: { reason, refundTo: req.body.refundTo || 'WALLET' },
+    details: { reason, refundTo: result.cancelRefund?.to || 'WALLET', amount: fromCents(result.cancelRefund?.amountCents || 0), account: result.cancelRefund?.accountName || '', reference: result.cancelRefund?.reference || '' },
   });
 
   res.json({ success: true, data: toDTO(result) });
@@ -501,21 +688,20 @@ export const reverseSale = asyncHandler(async (req, res) => {
 // and historical cost -- never today's cost), reduces this invoice's
 // subtotal/discount/total by the returned value, and reconciles the
 // difference by first relieving this invoice's still-unpaid balance, then
-// refunding any remainder that was already paid out of the account the sale
-// was paid into. Blocked if a debt payment has already been allocated
-// against this invoice, same as reverseSale, since that would make the
-// refund destination ambiguous.
+// giving back what was already paid -- at the sale or by debt payments later:
+// wallet credit back to the wallet, the rest to the customer's wallet
+// (refundTo: 'WALLET') or as cash out of an account (refundTo: 'ACCOUNT',
+// accountId -- default the account the sale was paid into -- and the number
+// it was sent to).
 export const returnSale = asyncHandler(async (req, res) => {
   const { items: returnItems, reason = '' } = req.body;
+  const reference = String(req.body.reference || '').trim().slice(0, 100);
   if (!Array.isArray(returnItems) || !returnItems.length) throw new ApiError(400, 'Select at least one item to return.');
 
   const result = await runInTransaction(async (session) => {
     const sale = await Sale.findById(req.params.id).session(session);
     if (!sale) throw new ApiError(404, 'Sale not found.');
     if (sale.status !== 'CONFIRMED') throw new ApiError(409, 'Only confirmed invoices can have items returned. Cancel a Draft instead.');
-    if (sale.balanceAddedCents > 0 && sale.outstandingCents !== sale.balanceAddedCents) {
-      throw new ApiError(409, 'Cannot return items: a debt payment has already been applied to this invoice. Reverse or reallocate that payment first.');
-    }
 
     const indexByItem = new Map(sale.items.map((line, index) => [String(line.item), index]));
     const seen = new Set();
@@ -547,15 +733,18 @@ export const returnSale = asyncHandler(async (req, res) => {
     const walletRefundCents = Math.min(paidBackCents, sale.walletAmountCents || 0);
     const refundCents = paidBackCents - walletRefundCents;
 
-    // Validated before any lot/stock mutation: an invoice with no payment
-    // account on file cannot refund an already-paid cash portion.
-    if (refundCents > 0 && !sale.paymentAccount) {
-      throw new ApiError(409, 'This invoice has no payment account on file to refund the already-paid portion. Contact an administrator.');
-    }
+    // Paid at the sale first, then what debt payments paid on it later.
+    const refundFromSaleCents = Math.min(refundCents, sale.paidAmountCents);
+    const refundFromLaterCents = refundCents - refundFromSaleCents;
+    // Where that money goes. A walk-in sale has no wallet: cash only.
+    const wanted = req.body.refundTo === 'WALLET' || req.body.refundTo === 'ACCOUNT' ? req.body.refundTo : null;
+    const refundTo = refundCents <= 0 ? '' : !sale.customer ? 'ACCOUNT' : wanted || (sale.paymentAccount ? 'ACCOUNT' : 'WALLET');
+    // Validated before any lot/stock mutation.
     let account = null;
-    if (refundCents > 0) {
-      account = await Account.findById(sale.paymentAccount).session(session);
-      if (!account) throw new ApiError(409, 'The payment account for this invoice no longer exists. Contact an administrator.');
+    if (refundTo === 'ACCOUNT') {
+      const accountId = req.body.accountId || sale.paymentAccount;
+      account = accountId ? await Account.findById(accountId).session(session) : null;
+      if (!account || !account.isActive) throw new ApiError(400, 'Choose the account the money is given back from.');
     }
 
     // Restore stock into the exact lots each line consumed, most-recently
@@ -571,7 +760,11 @@ export const returnSale = asyncHandler(async (req, res) => {
     // exactly like a Stock IN receipt (same zero-stock rule applies if the
     // item has since sold out completely).
     for (const { index, qty, line } of returnedLines) {
-      let remaining = qty;
+      // Units sold ahead of stock came from no batch: returning them first
+      // only makes up the shortfall; the rest go back to their batches.
+      const stillOut = line.quantity - (line.returnedQuantity || 0);
+      const fromBatches = line.lotConsumption.reduce((s, e) => s + e.quantity, 0);
+      let remaining = qty - Math.min(qty, Math.max(0, stillOut - fromBatches));
       for (let i = line.lotConsumption.length - 1; i >= 0 && remaining > 0; i--) {
         const entry = line.lotConsumption[i];
         if (entry.quantity <= 0) continue;
@@ -602,6 +795,7 @@ export const returnSale = asyncHandler(async (req, res) => {
         averageCostBeforeCents: oldAverageCostCents,
         averageCostAfterCents: newAverageCostCents,
       });
+      await bookStockValueGap(session, itemDoc, { oldQuantity, oldCostCents: oldAverageCostCents, newQuantity: oldQuantity + qty, newCostCents: newAverageCostCents, incomingQuantity: qty, incomingUnitCostCents: line.costPriceCents }, { reason: `${sale.receiptNumber} returned: units sold ahead of stock`, user: req.user });
       itemDoc.quantity = oldQuantity + qty;
       itemDoc.costPriceCents = newAverageCostCents;
       await itemDoc.save({ session });
@@ -613,9 +807,9 @@ export const returnSale = asyncHandler(async (req, res) => {
     sale.totalCents = newTotalCents;
     sale.costOfGoodsCents -= deltaCogsCents;
     sale.profitCents = sale.totalCents - sale.costOfGoodsCents;
-    sale.balanceAddedCents -= reduceFromOutstanding;
+    sale.balanceAddedCents -= reduceFromOutstanding + refundFromLaterCents;
     sale.outstandingCents -= reduceFromOutstanding;
-    sale.paidAmountCents -= refundCents;
+    sale.paidAmountCents -= refundFromSaleCents;
     sale.walletAmountCents -= walletRefundCents;
 
     // Resolved before the return entry is pushed so the Return Receipt can
@@ -630,6 +824,9 @@ export const returnSale = asyncHandler(async (req, res) => {
       debtReducedCents: reduceFromOutstanding,
       refundCents,
       walletRefundCents,
+      refundTo,
+      refundAccountName: account?.name || '',
+      refundReference: refundTo === 'ACCOUNT' ? reference : '',
       reason,
       invoiceBalanceAfterCents: sale.outstandingCents,
       customerBalanceAfterCents,
@@ -662,14 +859,36 @@ export const returnSale = asyncHandler(async (req, res) => {
         );
       }
 
-      if (walletRefundCents > 0) {
-        await restoreWallet(customer, walletRefundCents, sale, session, req.user);
+      // Paid money handed back to the wallet instead of as cash.
+      if (refundTo === 'WALLET' && refundCents > 0) {
+        const walletBefore = customer.walletBalanceCents;
+        customer.walletBalanceCents += refundCents;
+        await customer.save({ session });
+        await CustomerWalletTransaction.create(
+          [
+            {
+              customer: customer._id,
+              type: 'REFUND',
+              amountCents: refundCents,
+              sale: sale._id,
+              note: `Items returned on ${sale.receiptNumber} -- money paid for them moved to the wallet${reason ? `: ${reason}` : ''}`,
+              balanceBeforeCents: walletBefore,
+              balanceAfterCents: customer.walletBalanceCents,
+              createdBy: req.user?._id,
+            },
+          ],
+          { session }
+        );
+      }
+
+      if (walletRefundCents > 0 || (refundTo === 'WALLET' && refundCents > 0)) {
+        if (walletRefundCents > 0) await restoreWallet(customer, walletRefundCents, sale, session, req.user);
         // Credit given back to the wallet pays any other debt the customer owes.
         await applyWalletToDebt(customer, session, req.user);
       }
     }
 
-    if (account && refundCents > 0) {
+    if (refundTo === 'ACCOUNT' && account && refundCents > 0) {
       await postImmediateTransaction(
         {
           account,
@@ -678,7 +897,7 @@ export const returnSale = asyncHandler(async (req, res) => {
           amountCents: refundCents,
           referenceType: 'Sale',
           referenceId: sale._id,
-          description: `Refund for return on sale ${sale.receiptNumber}${reason ? ` (${reason})` : ''}`,
+          description: `Refund for return on sale ${sale.receiptNumber}${sale.customerName ? ` — ${sale.customerName}` : ''}${reference ? ` (sent to ${reference})` : ''}${reason ? ` (${reason})` : ''}`,
           createdBy: req.user,
         },
         session
@@ -700,3 +919,112 @@ export const returnSale = asyncHandler(async (req, res) => {
 });
 
 export { toDTO as saleToDTO };
+
+// POST /api/sales/:id/transfer { customerId, reason } -- an invoice put on the
+// wrong customer moves to the right one, with all its money:
+// - what it still owes comes off the first customer's debt and goes onto the
+//   other's, with its purchase and paid totals (net of any returns);
+// - payments made on it (at the sale or later, cash or account) move with it
+//   -- a later payment that also paid other invoices is split, and only this
+//   invoice's part moves;
+// - wallet money used on it belonged to the first customer: it goes back to
+//   their wallet, and the right customer owes that part instead.
+// Both customers' histories record the move.
+export const transferSale = asyncHandler(async (req, res) => {
+  const reason = String(req.body.reason || '').trim().slice(0, 500);
+  if (!reason) throw new ApiError(400, 'Say why the invoice is being moved.');
+  const result = await runInTransaction(async (session) => {
+    const sale = await Sale.findById(req.params.id).session(session);
+    if (!sale) throw new ApiError(404, 'Invoice not found.');
+    if (sale.status === 'CANCELLED') throw new ApiError(409, 'A cancelled invoice cannot be moved.');
+    if (String(sale.customer) === String(req.body.customerId)) throw new ApiError(400, 'The invoice is already on this customer.');
+    const [from, to] = await Promise.all([Customer.findById(sale.customer).session(session), Customer.findById(req.body.customerId).session(session)]);
+    if (!to || to.archivedAt) throw new ApiError(404, 'Choose an active customer the invoice belongs to.');
+    const fromName = sale.customerName;
+    let walletBackCents = 0;
+
+    // A Draft: its wallet money goes back; nothing else is posted yet.
+    if (sale.status === 'DRAFT') {
+      if (sale.walletAmountCents > 0 && from) await restoreWallet(from, sale.walletAmountCents, sale, session, req.user);
+      walletBackCents = sale.walletAmountCents;
+      sale.walletAmountCents = 0;
+    }
+
+    if (sale.status === 'CONFIRMED') {
+      const ownedBefore = sale.outstandingCents;
+      // Later payments on this invoice.
+      const payments = await Payment.find({ type: 'debt_payment', status: { $ne: 'CANCELLED' }, 'allocations.sale': sale._id }).session(session);
+      for (const p of payments) {
+        const mine = p.allocations.filter((a) => String(a.sale) === String(sale._id));
+        const partCents = mine.reduce((s, a) => s + a.amountCents, 0);
+        if (partCents <= 0) continue;
+        if (!p.paymentAccount) {
+          // Paid from the first customer's wallet: back to it; owed again.
+          walletBackCents += partCents;
+          p.allocations = p.allocations.filter((a) => String(a.sale) !== String(sale._id));
+          p.amountCents -= partCents;
+          if (p.amountCents <= 0) { p.status = 'CANCELLED'; p.cancelledAt = new Date(); p.cancelReason = `Invoice ${sale.receiptNumber} moved to ${to.name}`; p.refundedTo = 'WALLET'; }
+          await p.save({ session });
+          continue;
+        }
+        if (mine.length === p.allocations.length) {
+          p.customer = to._id;
+          await p.save({ session });
+        } else {
+          // Split: this invoice's part becomes the right customer's payment.
+          p.allocations = p.allocations.filter((a) => String(a.sale) !== String(sale._id));
+          p.amountCents -= partCents;
+          await p.save({ session });
+          let number = `${p.receiptNumber}-M`;
+          for (let n = 2; await Payment.exists({ receiptNumber: number }).session(session); n += 1) number = `${p.receiptNumber}-M${n}`;
+          await Payment.create([{ receiptNumber: number, customer: to._id, amountCents: partCents, type: 'debt_payment', paymentAccount: p.paymentAccount, paymentAccountName: p.paymentAccountName, allocations: mine.map((a) => ({ sale: a.sale, receiptNumber: a.receiptNumber, amountCents: a.amountCents })), previousBalanceCents: 0, newBalanceCents: 0, notes: `Part of ${p.receiptNumber} that paid ${sale.receiptNumber}, moved with it`, createdAt: p.createdAt, createdBy: req.user?._id }], { session });
+        }
+      }
+      // Wallet money used at the sale.
+      walletBackCents += sale.walletAmountCents;
+      if (walletBackCents > 0 && from) {
+        const before = from.walletBalanceCents;
+        from.walletBalanceCents += walletBackCents;
+        await CustomerWalletTransaction.create([{ customer: from._id, type: 'REFUND', amountCents: walletBackCents, sale: sale._id, note: `Invoice ${sale.receiptNumber} moved to ${to.name}: wallet money used on it given back`, balanceBeforeCents: before, balanceAfterCents: from.walletBalanceCents, createdBy: req.user?._id }], { session });
+      }
+      sale.walletAmountCents = 0;
+      sale.outstandingCents += walletBackCents;
+
+      const netPurchasedCents = Math.max(0, sale.totalCents - (sale.returns || []).reduce((s, r) => s + (r.amountCents || 0), 0));
+      const owedCents = sale.outstandingCents;
+      const paidCents = Math.max(0, netPurchasedCents - owedCents);
+      const note = (dir, other) => `Invoice ${sale.receiptNumber} moved ${dir} ${other} -- ${reason}`;
+      if (from) {
+        const before = from.balanceCents;
+        from.balanceCents -= ownedBefore;
+        from.totalPurchasedCents = Math.max(0, from.totalPurchasedCents - netPurchasedCents);
+        from.totalPaidCents = Math.max(0, from.totalPaidCents - Math.max(0, paidCents - walletBackCents));
+        await from.save({ session });
+        await CustomerLedger.create([{ customer: from._id, type: 'ADJUSTMENT', amountCents: -ownedBefore, sale: sale._id, description: note('to', to.name), balanceBeforeCents: before, balanceAfterCents: from.balanceCents, createdBy: req.user?._id }], { session });
+      }
+      const before = to.balanceCents;
+      to.balanceCents += owedCents;
+      to.totalPurchasedCents += netPurchasedCents;
+      to.totalPaidCents += paidCents;
+      await to.save({ session });
+      await CustomerLedger.create([{ customer: to._id, type: 'ADJUSTMENT', amountCents: owedCents, sale: sale._id, description: note('from', fromName), balanceBeforeCents: before, balanceAfterCents: to.balanceCents, createdBy: req.user?._id }], { session });
+      // The payment taken at the sale belongs to the invoice.
+      await Payment.updateMany({ type: 'sale', relatedSale: sale._id }, { $set: { customer: to._id } }, { session });
+    }
+    sale.customer = to._id;
+    sale.customerName = to.name;
+    await sale.save({ session });
+    // The cashier who took the money sees the invoice was put on the right customer.
+    // Every line of money in on this invoice gets the note (also where it
+    // was moved to after a wrong account), added to any earlier correction.
+    const note = `Wrong customer corrected: ${fromName} → ${to.name}`;
+    await AccountTransaction.updateMany(
+      { referenceType: 'Sale', referenceId: sale._id, direction: 'IN', status: { $ne: 'REVERSED' } },
+      [{ $set: { correctionNote: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$correctionNote', ''] } }, 0] }, { $concat: ['$correctionNote', ' · ', note] }, note] }, correctedByName: whoLabel(req.user) } }],
+      { session }
+    );
+    return { sale, fromName, to, walletBackCents };
+  });
+  await logAudit({ user: req.user, action: 'sale.transfer', entityType: 'Sale', entityId: result.sale._id, details: { receiptNumber: result.sale.receiptNumber, from: result.fromName, to: result.to.name, reason, walletGivenBack: fromCents(result.walletBackCents) } });
+  res.json({ success: true, data: { id: result.sale._id, receiptNumber: result.sale.receiptNumber, from: result.fromName, to: result.to.name, customerId: result.to._id, walletGivenBack: fromCents(result.walletBackCents) } });
+});

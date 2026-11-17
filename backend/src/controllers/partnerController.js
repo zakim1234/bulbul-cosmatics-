@@ -18,6 +18,7 @@ function toDTO(p) {
     notes: p.notes,
     totalContributed: fromCents(p.totalContributedCents),
     totalWithdrawn: fromCents(p.totalWithdrawnCents),
+    openingBalance: fromCents(p.openingBalanceCents || 0),
     currentEquity: fromCents(p.currentEquityCents),
     totalProfit: fromCents(p.totalProfitCents || 0),
     branch: p.branch || null,
@@ -170,6 +171,53 @@ export const contributeCapital = asyncHandler(async (req, res) => {
   });
 
   res.status(201).json({ success: true, data: { partner: toDTO(result.partner), transaction: txnToDTO(result.capitalTxn) } });
+});
+
+// PUT /api/partners/:id/opening-balance { amount, date, note } -- admin/manager
+// only. Sets the capital the partner had before this system. No money moves
+// into an account (it is already in the business); the equity changes by the
+// difference from the old opening balance. 0 removes it.
+export const setOpeningBalance = asyncHandler(async (req, res) => {
+  const n = Number(req.body.amount);
+  if (req.body.amount === '' || req.body.amount == null || !Number.isFinite(n) || n < 0) throw new ApiError(400, 'Enter an opening balance of 0 or more.');
+  const amountCents = toCents(n);
+  if (String(req.body.note || '').length > 500) throw new ApiError(400, 'Note is too long (500 characters max).');
+  const date = parseCapitalDate(req.body.date);
+
+  const result = await runInTransaction(async (session) => {
+    const partner = await Partner.findById(req.params.id).session(session);
+    if (!partner || !partner.isActive) throw new ApiError(404, 'Partner not found.');
+    const oldCents = partner.openingBalanceCents || 0;
+    const delta = amountCents - oldCents;
+    if (partner.currentEquityCents + delta < 0) {
+      throw new ApiError(400, `This partner has already withdrawn more than that: the opening balance must be at least ${fromCents(oldCents - partner.currentEquityCents).toFixed(2)}.`);
+    }
+    const equityBeforeCents = partner.currentEquityCents;
+    partner.openingBalanceCents = amountCents;
+    partner.currentEquityCents += delta;
+    await partner.save({ session });
+
+    const existing = await PartnerCapitalTransaction.findOne({ partner: partner._id, type: 'OPENING_BALANCE' }).session(session);
+    if (amountCents === 0) {
+      if (existing) await PartnerCapitalTransaction.deleteOne({ _id: existing._id }, { session });
+    } else if (existing) {
+      existing.amountCents = amountCents;
+      existing.date = date;
+      existing.note = String(req.body.note || '').trim();
+      existing.equityBeforeCents = equityBeforeCents;
+      existing.equityAfterCents = partner.currentEquityCents;
+      await existing.save({ session });
+    } else {
+      await PartnerCapitalTransaction.create(
+        [{ partner: partner._id, partnerName: partner.name, type: 'OPENING_BALANCE', amountCents, account: null, accountName: '', date, note: String(req.body.note || '').trim(), equityBeforeCents, equityAfterCents: partner.currentEquityCents, createdBy: req.user?._id || null }],
+        { session }
+      );
+    }
+    return { partner, oldCents };
+  });
+
+  await logAudit({ user: req.user, action: 'partner.opening_balance', entityType: 'Partner', entityId: result.partner._id, details: { from: fromCents(result.oldCents), to: fromCents(amountCents) } });
+  res.json({ success: true, data: toDTO(result.partner) });
 });
 
 // POST /api/partners/:id/withdraw -- admin/manager only. Cannot exceed the

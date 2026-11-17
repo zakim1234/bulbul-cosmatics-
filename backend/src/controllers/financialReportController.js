@@ -8,6 +8,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { fromCents } from '../utils/money.js';
 import { resolveDateRange } from '../utils/dateRange.js';
 import { ApiError } from '../utils/ApiError.js';
+import { checkBalanceSheet } from '../services/balanceSheetCheckService.js';
 import { buildProfitLoss, profitLossToWorkbook } from '../services/profitLossService.js';
 import { buildBalanceSheet } from '../services/balanceSheetService.js';
 import ExcelJS from 'exceljs';
@@ -46,12 +47,19 @@ export const profitLossExport = asyncHandler(async (req, res) => {
 
 // GET /api/reports/balance-sheet?date=
 export const balanceSheetReport = asyncHandler(async (req, res) => {
-  res.json({ success: true, data: await buildBalanceSheet({ date: req.query.date }) });
+  res.json({ success: true, data: await buildBalanceSheet({ date: req.query.date, includeCompanyWallet: !!req.user?.isSuperAdmin }) });
+});
+
+// GET /api/reports/balance-sheet/check -- where an out-of-balance gap may come
+// from (read-only checks with links).
+export const balanceSheetCheck = asyncHandler(async (req, res) => {
+  // The same date as the Balance Sheet on screen, so both look at the same day.
+  res.json({ success: true, data: await checkBalanceSheet({ date: req.query.date, includeCompanyWallet: !!req.user?.isSuperAdmin }) });
 });
 
 // GET /api/reports/balance-sheet/export -- the same report as an .xlsx download.
 export const balanceSheetExport = asyncHandler(async (req, res) => {
-  const report = await buildBalanceSheet({ date: req.query.date });
+  const report = await buildBalanceSheet({ date: req.query.date, includeCompanyWallet: !!req.user?.isSuperAdmin });
   const wb = new ExcelJS.Workbook();
   wb.creator = BUSINESS_NAME;
   const ws = wb.addWorksheet('Balance Sheet', { views: [{ showGridLines: false }] });
@@ -87,6 +95,9 @@ export const balanceSheetExport = asyncHandler(async (req, res) => {
   line('LIABILITIES', '', { bold: true });
   line('Accounts Payable', report.liabilities.payable, { indent: 1 });
   line('Customer Deposits (Wallets)', report.liabilities.customerDeposits, { indent: 1 });
+  if (report.liabilities.fixedAssetDebt) line('Fixed Asset Debt', report.liabilities.fixedAssetDebt, { indent: 1 });
+  if (report.liabilities.unpaidExpenses) line('Unpaid Expenses (Liabilities)', report.liabilities.unpaidExpenses, { indent: 1 });
+  if (report.liabilities.openingLiabilities) line('Opening Liabilities (old system)', report.liabilities.openingLiabilities, { indent: 1 });
   line('Total Liabilities', report.liabilities.totalLiabilities, { bold: true, topBorder: true });
   ws.addRow([]);
   line('EQUITY', '', { bold: true });
@@ -94,6 +105,7 @@ export const balanceSheetExport = asyncHandler(async (req, res) => {
   for (const p of report.equity.partners || []) line(p.name, p.capital, { indent: 2 });
   line('Retained Earnings', report.equity.retainedEarnings, { indent: 1 });
   line('Net Income', report.equity.netIncome, { indent: 1 });
+  if (report.equity.fixedAssetReserve) line('Fixed Asset Reserve', report.equity.fixedAssetReserve, { indent: 1 });
   line('Total Equity', report.equity.totalEquity, { bold: true, topBorder: true });
   ws.addRow([]);
   line('TOTAL LIABILITIES & EQUITY', report.totalLiabilitiesAndEquity, { bold: true, topBorder: true });

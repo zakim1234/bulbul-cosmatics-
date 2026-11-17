@@ -7,7 +7,8 @@ import { useToast } from '../../context/ToastContext.jsx';
 
 const empty = { name: '', phone: '', email: '', address: '', notes: '' };
 
-export default function SupplierFormModal({ open, onClose, supplier, onSaved }) {
+// nameAndPhoneOnly: someone with just "Edit suppliers" -- the rest is shown, not editable.
+export default function SupplierFormModal({ open, onClose, supplier, onSaved, nameAndPhoneOnly = false }) {
   const toast = useToast();
   const [form, setForm] = useState(empty);
   const [error, setError] = useState('');
@@ -29,7 +30,7 @@ export default function SupplierFormModal({ open, onClose, supplier, onSaved }) 
     setSaving(true);
     try {
       if (supplier) {
-        await client.put(`/suppliers/${supplier.id}`, form);
+        await client.put(`/suppliers/${supplier.id}`, nameAndPhoneOnly ? { name: form.name, phone: form.phone } : form);
         toast.success('Supplier updated.');
       } else {
         await client.post('/suppliers', form);
@@ -47,7 +48,7 @@ export default function SupplierFormModal({ open, onClose, supplier, onSaved }) 
   return (
     <Modal open={open} onClose={onClose} title={supplier ? 'Edit Supplier' : 'Add Supplier'}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        {error && <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+        {error && <div className="rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-700">{error}</div>}
         <FormField label="Supplier Name" required>
           <Input value={form.name} onChange={set('name')} placeholder="e.g. General Wholesale Co." />
         </FormField>
@@ -56,16 +57,16 @@ export default function SupplierFormModal({ open, onClose, supplier, onSaved }) 
             <Input value={form.phone} onChange={set('phone')} placeholder="Optional" />
           </FormField>
           <FormField label="Email">
-            <Input value={form.email} onChange={set('email')} placeholder="Optional" />
+            <Input value={form.email} onChange={set('email')} placeholder="Optional" disabled={nameAndPhoneOnly} />
           </FormField>
         </div>
         <FormField label="Address">
-          <Input value={form.address} onChange={set('address')} placeholder="Optional" />
+          <Input value={form.address} onChange={set('address')} placeholder="Optional" disabled={nameAndPhoneOnly} />
         </FormField>
         <FormField label="Notes">
-          <Textarea rows={2} value={form.notes} onChange={set('notes')} placeholder="Optional" />
+          <Textarea rows={2} value={form.notes} onChange={set('notes')} placeholder="Optional" disabled={nameAndPhoneOnly} />
         </FormField>
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+        <div className="flex justify-end gap-2 border-t border-neutral-100 pt-4">
           <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>

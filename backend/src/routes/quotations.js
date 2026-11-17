@@ -7,8 +7,9 @@ router.use(requireAuth);
 // Seller/POS ("Convert Quotation to Invoice") -- carved out of the
 // 'quotations' gate so a cashier with only the POS module can still
 // complete a conversion the Quotations team already marked Accepted.
-router.get('/:id', getQuotation);
-router.post('/:id/convert', convertQuotation);
+// Either module is enough; anyone with neither has no business here.
+router.get('/:id', requirePermission('pos', 'quotations'), getQuotation);
+router.post('/:id/convert', requirePermission('pos', 'quotations'), convertQuotation);
 
 router.get('/', requirePermission('quotations'), listQuotations);
 router.post('/', requirePermission('quotations'), createQuotation);

@@ -1,5 +1,6 @@
 import Branch from '../models/Branch.js';
 import Purchase from '../models/Purchase.js';
+import { NET_OWED } from '../services/supplierPaymentService.js';
 import InventoryItem from '../models/InventoryItem.js';
 import Customer from '../models/Customer.js';
 import Sale from '../models/Sale.js';
@@ -21,10 +22,10 @@ async function branchFigures(start, end) {
   const soon = new Date(now.getTime() + NEAR_EXPIRY_DAYS * 86400000);
   const [pnl, [purchases], [stock], [custDebt], [suppDebt], lowStock, outOfStock, expired, nearExpiry] = await Promise.all([
     computePeriod({ start, end, basis: 'accrual' }),
-    Purchase.aggregate([{ $match: { status: 'completed', purchaseDate: { $gte: start, $lte: end } } }, { $group: { _id: null, c: { $sum: '$totalCostCents' } } }]),
+    Purchase.aggregate([{ $match: { status: 'completed', isOpeningBalance: { $ne: true }, purchaseDate: { $gte: start, $lte: end } } }, { $group: { _id: null, c: { $sum: '$totalCostCents' } } }]),
     InventoryItem.aggregate([{ $match: { quantity: { $gt: 0 } } }, { $group: { _id: null, c: { $sum: { $multiply: ['$quantity', '$costPriceCents'] } } } }]),
     Customer.aggregate([{ $match: { balanceCents: { $gt: 0 } } }, { $group: { _id: null, c: { $sum: '$balanceCents' } } }]),
-    Purchase.aggregate([{ $match: { status: 'completed', balanceCents: { $gt: 0 } } }, { $group: { _id: null, c: { $sum: '$balanceCents' } } }]),
+    Purchase.aggregate([...NET_OWED, { $group: { _id: null, c: { $sum: '$owedCents' } } }]),
     InventoryItem.countDocuments({ $expr: { $and: [{ $gt: ['$quantity', 0] }, { $lte: ['$quantity', '$lowStockThreshold'] }] } }),
     InventoryItem.countDocuments({ quantity: { $lte: 0 } }),
     InventoryItem.countDocuments({ quantity: { $gt: 0 }, expiryDate: { $ne: null, $lt: now } }),
@@ -85,8 +86,10 @@ async function branchLive() {
   const sum = (match) =>
     Sale.aggregate([{ $match: match }, { $group: { _id: null, revenue: { $sum: '$totalCents' }, profit: { $sum: '$profitCents' }, count: { $sum: 1 } } }]).then((r) => r[0] || { revenue: 0, profit: 0, count: 0 });
   const [todayC, todayPending, month, daily, [stock], [debt], lowStock, expired, nearExpiry, recent] = await Promise.all([
-    sum({ status: 'CONFIRMED', createdAt: { $gte: today } }),
-    sum({ status: 'DRAFT', createdAt: { $gte: today } }),
+    // Today: closed already, and still to be counted by Close Day (an
+    // invoice is final at once but awaits Close Day, or an old Pending one).
+    sum({ status: 'CONFIRMED', awaitingDayClose: { $ne: true }, createdAt: { $gte: today } }),
+    sum({ $or: [{ status: 'DRAFT' }, { status: 'CONFIRMED', awaitingDayClose: true }], createdAt: { $gte: today } }),
     sum({ status: 'CONFIRMED', createdAt: { $gte: monthStart } }),
     Sale.aggregate([
       { $match: { status: 'CONFIRMED', createdAt: { $gte: last14 } } },

@@ -7,6 +7,8 @@ import { ApiError } from '../utils/ApiError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { fromCents } from '../utils/money.js';
 import { logAudit } from '../services/auditService.js';
+import { userHas } from '../models/User.js';
+import { escapeRegex, NAME_ORDER, startsWith } from '../utils/regex.js';
 
 function toDTO(s) {
   return {
@@ -23,20 +25,23 @@ function toDTO(s) {
 }
 
 export const listSuppliers = asyncHandler(async (req, res) => {
-  const { search = '', page = 1, limit = 20 } = req.query;
+  const { page = 1, limit = 20 } = req.query;
+  const search = escapeRegex(String(req.query.search ?? '').trim());
   const filter = {};
-  if (search.trim()) {
+  if (search) {
     filter.$or = [
-      { name: { $regex: search.trim(), $options: 'i' } },
-      { phone: { $regex: search.trim(), $options: 'i' } },
+      { name: startsWith(search) },
+      { phone: { $regex: search, $options: 'i' } },
     ];
   }
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 20));
 
+  // A to Z, upper and lower case alike.
   const [items, total] = await Promise.all([
     Supplier.find(filter)
-      .sort({ name: 1 })
+      .collation(NAME_ORDER)
+      .sort({ name: 1, _id: 1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),
     Supplier.countDocuments(filter),
@@ -50,9 +55,10 @@ export const listSuppliers = asyncHandler(async (req, res) => {
 });
 
 export const searchSuppliers = asyncHandler(async (req, res) => {
-  const q = (req.query.q || '').trim();
-  const filter = q ? { name: { $regex: q, $options: 'i' } } : {};
-  const suppliers = await Supplier.find(filter).sort({ name: 1 }).limit(10);
+  const q = escapeRegex(String(req.query.q ?? '').trim());
+  const filter = q ? { name: startsWith(q) } : {};
+  // Every match, A to Z -- not the first few.
+  const suppliers = await Supplier.find(filter).collation(NAME_ORDER).sort({ name: 1 });
   res.json({ success: true, data: suppliers.map(toDTO) });
 });
 
@@ -89,9 +95,13 @@ export const updateSupplier = asyncHandler(async (req, res) => {
     supplier.name = name.trim();
   }
   if (phone !== undefined) supplier.phone = phone;
-  if (email !== undefined) supplier.email = email;
-  if (address !== undefined) supplier.address = address;
-  if (notes !== undefined) supplier.notes = notes;
+  // "Edit suppliers" changes the name and phone; email, address and notes are
+  // for admins (and the Super Admin).
+  if (req.user?.isSuperAdmin || req.user?.role === 'admin') {
+    if (email !== undefined) supplier.email = email;
+    if (address !== undefined) supplier.address = address;
+    if (notes !== undefined) supplier.notes = notes;
+  }
 
   await supplier.save();
 

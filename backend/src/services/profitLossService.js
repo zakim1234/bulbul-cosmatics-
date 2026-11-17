@@ -1,12 +1,15 @@
 import ExcelJS from 'exceljs';
 import Sale from '../models/Sale.js';
 import Expense from '../models/Expense.js';
+import Liability from '../models/Liability.js';
 import AccountTransaction from '../models/AccountTransaction.js';
+import PurchasePayment from '../models/PurchasePayment.js';
 import { listExpenseCategories } from './expenseCategoryService.js';
 import { ApiError } from '../utils/ApiError.js';
 import { fromCents } from '../utils/money.js';
 import { netAdjustmentValueCents } from './stockAdjustmentService.js';
 import { BUSINESS_NAME } from '../config/business.js';
+import { getCompanySetting } from '../models/CompanySetting.js';
 
 export const BASES = ['accrual', 'cash'];
 export const COLUMN_MODES = ['total', 'month'];
@@ -67,24 +70,36 @@ function monthBuckets(start, end) {
 //              to invoices, minus refunds paid out. Unpaid credit sales add
 //              nothing until the customer pays.
 //
-// Discount Received (supplier discounts) is always 0 for now: purchase
-// invoices have no discount field, so there is nothing to report.
+// Discount Received: discounts suppliers gave when we paid them (owed 1000,
+// paid 800, 200 off) -- income, on the date of the payment.
 // Exported (not just used internally by buildProfitLoss) so the Balance
 // Sheet can reuse the exact same accrual net-income formula for both its
 // "Net Income" (current fiscal year to date) and "Retained Earnings"
 // (everything before that) lines -- see balanceSheetService.js.
 export async function computePeriod({ start, end, basis }) {
   const salesMatch = { status: 'CONFIRMED', createdAt: { $gte: start, $lte: end } };
-  const [[sales], expenseRows, inventoryAdjustmentCents] = await Promise.all([
+  const [[sales], expenseRows, inventoryAdjustmentCents, liabilityRows, [discounts]] = await Promise.all([
     Sale.aggregate([
       { $match: salesMatch },
-      { $group: { _id: null, total: { $sum: '$totalCents' }, cogs: { $sum: '$costOfGoodsCents' }, wallet: { $sum: '$walletAmountCents' } } },
+      { $group: { _id: null, total: { $sum: '$totalCents' }, cogs: { $sum: '$costOfGoodsCents' }, wallet: { $sum: '$walletAmountCents' }, merchantVat: { $sum: { $cond: ['$vatDeducted', '$vatCents', 0] } } } },
     ]),
     Expense.aggregate([
       { $match: { status: 'POSTED', date: { $gte: start, $lte: end } } },
       { $group: { _id: '$category', cents: { $sum: '$amountCents' } } },
     ]),
     netAdjustmentValueCents({ start, end }),
+    // Liabilities: expenses charged but not paid yet count on their date,
+    // in their category (an opening one is from the old books: not counted).
+    // Those charged as an Expense are counted there, not again here.
+    Liability.aggregate([
+      { $match: { opening: { $ne: true }, expense: null, date: { $gte: start, $lte: end } } },
+      { $group: { _id: '$category', cents: { $sum: '$amountCents' } } },
+    ]),
+    // Discounts suppliers gave when we paid them (no money moved).
+    PurchasePayment.aggregate([
+      { $match: { discount: true, status: 'POSTED', paymentDate: { $gte: start, $lte: end } } },
+      { $group: { _id: null, cents: { $sum: '$amountCents' } } },
+    ]),
   ]);
 
   let salesIncomeCents = sales?.total || 0;
@@ -104,12 +119,17 @@ export async function computePeriod({ start, end, basis }) {
     ]);
     const received = flows.find((f) => f._id === 'IN')?.cents || 0;
     const refunded = flows.find((f) => f._id === 'OUT')?.cents || 0;
-    salesIncomeCents = received + (sales?.wallet || 0) - refunded;
+    // The merchant kept its VAT before the money reached the account: the
+    // sale brought in the full amount, and the VAT is an expense below.
+    salesIncomeCents = received + (sales?.wallet || 0) - refunded + (sales?.merchantVat || 0);
   }
 
   const expenses = new Map(expenseRows.map((r) => [r._id, r.cents]));
+  // Merchant VAT the merchant company kept out of sale payments (not ours).
+  if (sales?.merchantVat) expenses.set('Merchant VAT', (expenses.get('Merchant VAT') || 0) + sales.merchantVat);
+  for (const r of liabilityRows) expenses.set(r._id, (expenses.get(r._id) || 0) + r.cents);
   const totalExpenseCents = [...expenses.values()].reduce((sum, c) => sum + c, 0);
-  const discountReceivedCents = 0;
+  const discountReceivedCents = discounts?.cents || 0;
   const totalIncomeCents = salesIncomeCents + discountReceivedCents;
   const salesCogsCents = sales?.cogs || 0;
   // Stock written off (damaged/expired/lost) minus stock found, valued at
@@ -169,6 +189,23 @@ export async function buildProfitLoss({ from, to, basis = 'accrual', columns = '
     { type: 'total', label: 'Total Expense', values: values((p) => p.totalExpenseCents) },
     { type: 'grand', label: 'Net Income', values: values((p) => p.netIncomeCents) },
   ];
+
+  // The opening Net Income (profit made this year before the move to this
+  // system, entered under Opening balances): shown under Net Income and
+  // added to it, so the profit made from now on builds on it. It sits in the
+  // first column of its year in the range (the total always has it).
+  const setting = await getCompanySetting();
+  const openingCents = setting.openingNetIncomeCents || 0;
+  const openingYear = setting.openingNetIncomeYear;
+  if (openingCents && openingYear && start.getFullYear() <= openingYear && openingYear <= end.getFullYear()) {
+    const firstKey = buckets.find((b) => b.start.getFullYear() === openingYear)?.key;
+    const opening = (c) => (c.key === 'total' || c.key === firstKey ? openingCents : 0);
+    const both = (pick) => Object.fromEntries(cols.map((c) => [c.key, fromCents(pick(c))]));
+    rows.push(
+      { type: 'line', label: `Opening Net Income ${openingYear} (old system)`, depth: 1, values: both(opening) },
+      { type: 'grand', label: 'Net Income incl. opening', values: both((c) => c.period.netIncomeCents + opening(c)) },
+    );
+  }
 
   return {
     title: 'Profit & Loss',
