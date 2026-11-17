@@ -1,5 +1,5 @@
 export const BUSINESS = {
-  name: 'Bulbul Cosmetics',
+  name: 'Mumtaz Pharmacy',
   tagline: 'Your Health, Our Priority',
   addressLine: 'Mogadishu - Somalia',
   // The number customers call.

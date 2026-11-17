@@ -159,7 +159,7 @@ test('PROFIT & LOSS -- accrual vs cash basis, expense categories, month columns,
     const ws = wb.getWorksheet('Profit & Loss');
     const cells = [];
     ws.eachRow((row) => cells.push(row.values.slice(1)));
-    assert.equal(cells[0][0], 'Bulbul Cosmetics');
+    assert.equal(cells[0][0], 'Mumtaz Pharmacy');
     assert.equal(cells[1][0], 'Profit & Loss');
     assert.equal(cells[3][0], 'Cash Basis');
     assert.equal(cells.find((r) => String(r[0]).trim() === 'Sales Income')[1], 70);
